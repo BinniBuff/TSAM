@@ -363,9 +363,13 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
                         // 5) Try to parse as binary 16-bit or 32-bit network-order integer(s)
                         if (final_len >= 2)
                         {
-                            uint16_t v16;
-                            memcpy(&v16, final_buf, 2);
-                            uint16_t port16 = ntohs(v16);
+                            char v16[4];
+                            memcpy(&v16, final_buf + n - 5, 4);
+                            printf("Port nr should be: %s!\n", v16);
+                            unsigned long v = strtoul(v16, nullptr, 10);
+                            printf("Port nr as long should be: %lu!\n", v);
+                            uint16_t v16b = (uint16_t) v;
+                            uint16_t port16 = ntohs(v16b);
                             if (port16 > 0 && port16 <= 65535)
                             {
                                 printf("Network-order port: %u\n", (unsigned)port16);
@@ -513,6 +517,227 @@ void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
     }
 }
 
+void knocking(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_t *address_length_ptr, uint32_t signature, uint16_t secret_port1, uint16_t secret_port2, char *out_phrase)
+{
+	char ports[32];
+	uint16_t secret_port1_net = htons(secret_port1);
+	int n = snprintf(ports, sizeof(ports), "%u,%u\n", secret_port1_net, (unsigned)secret_port2);
+	if (n < 0 || n >= (int)sizeof(ports)) {
+		fprintf(stderr, "ports formatting failed/overflow\n");
+		return;
+	}
+	
+	ssize_t sent = sendto(udpsock, &ports, n, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
+	if (sent != n)
+    {
+        perror("sendto ports to knocking port failed");
+    } 
+    else 
+    {
+        printf("Sent ports to knocking port, %d bytes: %s\n", n, ports);
+
+        // Reply
+        socklen_t addrlen2 = sizeof(*udpAddress);
+        ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)udpAddress, &addrlen2);
+        if (rlen < 0) {
+            perror("recvfrom after sending signature to checksum port");
+        } 
+        else 
+        {
+            char saddr2[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &udpAddress->sin_addr, saddr2, sizeof(saddr2));
+            printf("recvfrom returned %zd bytes from %s:%d\n", rlen, saddr2, ntohs(udpAddress->sin_port));
+            // hex dump
+			printf("data (hex):");
+			for (ssize_t i = 0; i < rlen; ++i) printf(" %02x", (unsigned char)buffer[i]);
+			printf("\n");
+
+			// safe string view
+			{
+				size_t n = (size_t)rlen;
+				char tmp[n+1];
+				memcpy(tmp, buffer, n);
+				tmp[n] = '\0';
+				printf("as-string: '%s'\n", tmp);
+				if (n == 29)
+				{
+					char number[5];
+					for (int j = 0; j < n; j += 5)
+					{
+						memcpy(number, tmp + j, 4);
+						number[4] = '\0';
+						unsigned long vn = strtoul(number, NULL, 10);
+						uint16_t nr = (uint16_t)vn;
+						printf("the number after conversion %u", nr);
+						if (nr == secret_port1_net)
+						{
+							udpAddress->sin_port = htons(secret_port1_net);
+							ssize_t sent = sendto(udpsock, &signature, 4, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
+
+							if (sent != 4)
+							{
+								perror("sendto signature to evil port failed");
+							} 
+							else 
+							{
+								printf("Sent 4-byte signature to checksum port (net order): %02x%02x%02x%02x\n", ((unsigned char *)&signature)[0], ((unsigned char *)&signature)[1], ((unsigned char *)&signature)[2], ((unsigned char *)&signature)[3]);
+
+								// Reply
+								socklen_t addrlen2 = sizeof(*udpAddress);
+								ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)udpAddress, &addrlen2);
+								if (rlen < 0) {
+									perror("recvfrom after sending signature to knocking port");
+								} 
+								else 
+								{
+									char saddr2[INET_ADDRSTRLEN];
+									inet_ntop(AF_INET, &udpAddress->sin_addr, saddr2, sizeof(saddr2));
+									printf("recvfrom returned %zd bytes from %s:%d\n", rlen, saddr2, ntohs(udpAddress->sin_port));
+									// hex dump
+									printf("data (hex):");
+									for (ssize_t i = 0; i < rlen; ++i) printf(" %02x", (unsigned char)buffer[i]);
+									printf("\n");
+
+									// safe string view
+									{
+										size_t n = (size_t)rlen;
+										char tmp[n+1];
+										memcpy(tmp, buffer, n);
+										tmp[n] = '\0';
+										printf("as-string: '%s'\n", tmp);
+									}
+									int phrase_len = 0;
+									for (int k = 0; out_phrase[k] != '\0'; k++)
+									{
+										phrase_len++;
+									}
+									ssize_t sent2 = sendto(udpsock, &out_phrase, phrase_len, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
+
+									if (sent2 != phrase_len)
+									{
+										perror("sendto signature to evil port failed");
+									} 
+									else 
+									{
+										printf("Sent %d-byte signature to checksum port (net order): %02x%02x%02x%02x\n", phrase_len, ((unsigned char *)&signature)[0], ((unsigned char *)&signature)[1], ((unsigned char *)&signature)[2], ((unsigned char *)&signature)[3]);
+
+										// Reply
+										socklen_t addrlen2 = sizeof(*udpAddress);
+										ssize_t rlen2 = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)udpAddress, &addrlen2);
+										if (rlen2 < 0) {
+											perror("recvfrom after sending signature to knocking port");
+										} 
+										else 
+										{
+											char saddr2[INET_ADDRSTRLEN];
+											inet_ntop(AF_INET, &udpAddress->sin_addr, saddr2, sizeof(saddr2));
+											printf("recvfrom returned %zd bytes from %s:%d\n", rlen2, saddr2, ntohs(udpAddress->sin_port));
+											// hex dump
+											printf("data (hex):");
+											for (ssize_t i = 0; i < rlen; ++i) printf(" %02x", (unsigned char)buffer[i]);
+											printf("\n");
+
+											// safe string view
+											{
+												size_t n = (size_t)rlen2;
+												char tmp[n+1];
+												memcpy(tmp, buffer, n);
+												tmp[n] = '\0';
+												printf("as-string: '%s'\n", tmp);
+											}
+										}
+									}
+								}
+							}
+						}
+						else
+						{
+							udpAddress->sin_port = htons(secret_port2);
+							ssize_t sent = sendto(udpsock, &signature, 4, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
+
+							if (sent != 4)
+							{
+								perror("sendto signature to evil port failed");
+							} 
+							else 
+							{
+								printf("Sent 4-byte signature to checksum port (net order): %02x%02x%02x%02x\n", ((unsigned char *)&signature)[0], ((unsigned char *)&signature)[1], ((unsigned char *)&signature)[2], ((unsigned char *)&signature)[3]);
+
+								// Reply
+								socklen_t addrlen2 = sizeof(*udpAddress);
+								ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)udpAddress, &addrlen2);
+								if (rlen < 0) {
+									perror("recvfrom after sending signature to knocking port");
+								} 
+								else 
+								{
+									char saddr2[INET_ADDRSTRLEN];
+									inet_ntop(AF_INET, &udpAddress->sin_addr, saddr2, sizeof(saddr2));
+									printf("recvfrom returned %zd bytes from %s:%d\n", rlen, saddr2, ntohs(udpAddress->sin_port));
+									// hex dump
+									printf("data (hex):");
+									for (ssize_t i = 0; i < rlen; ++i) printf(" %02x", (unsigned char)buffer[i]);
+									printf("\n");
+
+									// safe string view
+									{
+										size_t n = (size_t)rlen;
+										char tmp[n+1];
+										memcpy(tmp, buffer, n);
+										tmp[n] = '\0';
+										printf("as-string: '%s'\n", tmp);
+									}
+									int phrase_len = 0;
+									for (int k = 0; out_phrase[k] != '\0'; k++)
+									{
+										phrase_len++;
+									}
+									ssize_t sent2 = sendto(udpsock, &out_phrase, phrase_len, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
+
+									if (sent2 != phrase_len)
+									{
+										perror("sendto signature to evil port failed");
+									} 
+									else 
+									{
+										printf("Sent %d-byte signature to checksum port (net order): %02x%02x%02x%02x\n", phrase_len, ((unsigned char *)&signature)[0], ((unsigned char *)&signature)[1], ((unsigned char *)&signature)[2], ((unsigned char *)&signature)[3]);
+
+										// Reply
+										socklen_t addrlen2 = sizeof(*udpAddress);
+										ssize_t rlen2 = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)udpAddress, &addrlen2);
+										if (rlen2 < 0) {
+											perror("recvfrom after sending signature to knocking port");
+										} 
+										else 
+										{
+											char saddr2[INET_ADDRSTRLEN];
+											inet_ntop(AF_INET, &udpAddress->sin_addr, saddr2, sizeof(saddr2));
+											printf("recvfrom returned %zd bytes from %s:%d\n", rlen2, saddr2, ntohs(udpAddress->sin_port));
+											// hex dump
+											printf("data (hex):");
+											for (ssize_t i = 0; i < rlen; ++i) printf(" %02x", (unsigned char)buffer[i]);
+											printf("\n");
+
+											// safe string view
+											{
+												size_t n = (size_t)rlen2;
+												char tmp[n+1];
+												memcpy(tmp, buffer, n);
+												tmp[n] = '\0';
+												printf("as-string: '%s'\n", tmp);
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 6)            // Arguments need to be 6 including the program
@@ -627,6 +852,7 @@ int main(int argc, char *argv[])
     char buffer[4096];
     uint32_t secret_signature = 0;      // The signature from secret not in network order
     uint16_t secret_port = 0;           // port from secret
+    uint16_t evil_port = 4010;
     char the_secret_phrase[256] = {0};             // the secret phrase from checksum
     for (int i = 0; i < portCount; ++i)
     {
@@ -641,17 +867,23 @@ int main(int argc, char *argv[])
             secrete(udpsock, &udpAddress, buffer, &address_length, &secret_signature, &secret_port);
             printf("After secrete: secret_signature=0x%08x, secret_port=%u\n", (unsigned)secret_signature, (unsigned)secret_port);
         }
-        else if (i == 1)
+        /*else if (i == 1)
         {
             printf("Entering evil.\n");
             evil(udpsock, &udpAddress, buffer, &address_length, portnrsord[1], secret_signature, the_secret_phrase, sizeof(the_secret_phrase));
             printf("After evil: secret phrase: '%s'\n", the_secret_phrase);
-        }
+        }*/
         else if (i == 2)
         {
 			printf("Entering checksum.\n");
 			checksum(udpsock, &udpAddress, buffer, &address_length, secret_signature, secret_port, the_secret_phrase);
 			printf("After checksum: secret phrase: '%s'\n", the_secret_phrase);
+		}
+        else if (i == 3)
+        {
+			printf("Entering EXPSTN.\n");
+			knocking(udpsock, &udpAddress, buffer, &address_length, secret_signature, secret_port, evil_port, the_secret_phrase);
+			printf("After EXPSTN: secret phrase: '%s'\n", the_secret_phrase);
 		}
     }
     close(udpsock);
