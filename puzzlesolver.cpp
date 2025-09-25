@@ -118,7 +118,7 @@ void evil(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_t *
 {
     struct sockaddr_in sender_address;
     socklen_t sender_len = sizeof(sender_address);
-    *out_port = 0; // Initialize output port
+    *out_port = 0; // Initialize output port // fjarlægja
 
     uint32_t net_signature = htonl(signature);
 
@@ -580,7 +580,6 @@ int main(int argc, char *argv[])
     int portnrsord[4];
 
     // try to reach all ports in the given range
-    //for (int i = 0; i < sizeof(portnrs); i++)            // sizeof returns the number of bytes, not items
     int portCount = sizeof(portnrs) / sizeof(portnrs[0]);        // Size of the array in bytes divided by the size of the first item, should give the number of items
     struct sockaddr_in udpAddress;
     // set IP address in socket
@@ -595,18 +594,20 @@ int main(int argc, char *argv[])
     struct timeval timeout;
     timeout.tv_sec = 1;
     timeout.tv_usec = 0;
-
+	
+	// set timeout of 1 second
     if (setsockopt(udpsock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
     {
         perror("timeout failed");
         exit(0);
     }
+    
+    udpAddress.sin_family = AF_INET;		// færði úr for lykkjunum, sjáum hvort þurfi að færa aftur
 
     for (int i = 0; i < portCount; ++i)
     {
         // set up socket port number
         
-        udpAddress.sin_family = AF_INET;
         udpAddress.sin_port = htons(portnrs[i]);
 
         const char *message = "hello UDP";
@@ -619,39 +620,31 @@ int main(int argc, char *argv[])
             exit(0);
         }
 
-        char buffer[4096];
+        char buffer[PACK_LEN];
 
         ssize_t recvfrom_len = recvfrom(udpsock, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&udpAddress, &address_length);
 
-        // if (recvfrom(udpsock, &buffer, 4096, 0, (struct sockaddr *)&
-        // udpAddress, &address_length) >= 0)
+      
         if (recvfrom_len >= 0)
         {
             buffer[recvfrom_len] = '\0';        // add null termination
-            cout << portnrs[i] << ": \n" << buffer << endl;
+            
+            // Put the ports in the right order
             if (buffer[0] == 'G' && buffer[9] != '!')
             {
                 portnrsord[0] = portnrs[i];
-                // call the function (secrete) that contains the previous block
-                // secrete(udpsock, &udpAddress, buffer, &address_length);
             }
             else if (buffer[0] == 'G' && buffer[9] == '!')
             {
                 portnrsord[3] = portnrs[i];
-                // call the function (secrete) that contains the previous block
-                // secrete(udpsock, &udpAddress, buffer, &address_length);
             }
             else if (buffer[0] == 'T')
             {
                 portnrsord[1] = portnrs[i];
-                // call the function (secrete) that contains the previous block
-                // secrete(udpsock, &udpAddress, buffer, &address_length);
             }
             else if(buffer[0] == 'S')
             {
                 portnrsord[2] = portnrs[i];
-                // call the function (secrete) that contains the previous block
-                // secrete(udpsock, &udpAddress, buffer, &address_length);
             }
         }
     }
@@ -665,10 +658,10 @@ int main(int argc, char *argv[])
     {
         // set up socket port number
         
-        udpAddress.sin_family = AF_INET;
         udpAddress.sin_port = htons(portnrsord[i]);
         flush_socket(udpsock);
 
+		// get into each function based on what port we are on
         if (i == 0)
         {   
             printf("Entering secret.\n");
