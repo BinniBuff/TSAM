@@ -123,97 +123,101 @@ void evil(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_t *
     uint32_t net_signature = htonl(signature);
 
     // Create and send the single raw packet with signature as payload
-    {
-        int sraw = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
-        if (sraw < 0) {
-            perror("socket raw");
-            return;
-        }
+	int sraw = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+	if (sraw < 0) {
+		perror("socket raw");
+		return;
+	}
 
-        int one = 1;
-        if (setsockopt(sraw, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0) {
-            perror("setsockopt IP_HDRINCL");
-            close(sraw);
-            return;
-        }
+	// set options for raw socket to be able to set own header
+	int one = 1;
+	if (setsockopt(sraw, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0) {
+		perror("setsockopt IP_HDRINCL");
+		close(sraw);
+		return;
+	}
 
-        unsigned char pkt[PACK_LEN];
-        memset(pkt, 0, sizeof(pkt));
+	unsigned char pkt[PACK_LEN];
+	memset(pkt, 0, sizeof(pkt));
 
-        struct iphdr *ip2 = (struct iphdr *)pkt;
-        struct udphdr *udp2 = (struct udphdr *)(pkt + sizeof(struct iphdr));
+	struct iphdr *ip2 = (struct iphdr *)pkt;
+	struct udphdr *udp2 = (struct udphdr *)(pkt + sizeof(struct iphdr));
 
-        int payload_len = 4;
-        int pktlen = sizeof(struct iphdr) + sizeof(struct udphdr) + payload_len;
+	int payload_len = 4;
+	int pktlen = sizeof(struct iphdr) + sizeof(struct udphdr) + payload_len;
 
-        // IP header
-        ip2->ihl = 5;
-        ip2->version = 4;
-        ip2->tos = 0;
-        ip2->tot_len = htons(pktlen);
-        ip2->id = htons(54322);
-        ip2->frag_off = htons(0x8000); // Muhahahahaha
-        ip2->ttl = 64;
-        ip2->protocol = IPPROTO_UDP;
+	// IP header
+	ip2->ihl = 5;
+	ip2->version = 4;
+	ip2->tos = 0;
+	ip2->tot_len = htons(pktlen);
+	ip2->id = htons(54322);
+	ip2->frag_off = htons(0x8000); // Muhahahahaha
+	ip2->ttl = 64;
+	ip2->protocol = IPPROTO_UDP;
 
-        struct sockaddr_in local_ip;
-        socklen_t local_ip_len = sizeof(local_ip);
-        if (getsockname(udpsock, (struct sockaddr *)&local_ip, &local_ip_len) == 0) {
-            ip2->saddr = local_ip.sin_addr.s_addr;
-        } else {
-            perror("getsockname for raw send");
-            ip2->saddr = inet_addr("0.0.0.0");
-        }
-        ip2->daddr = udpAddress->sin_addr.s_addr;
+	// Get the socket address for the local IP
+	struct sockaddr_in local_ip;
+	socklen_t local_ip_len = sizeof(local_ip);
+	if (getsockname(udpsock, (struct sockaddr *)&local_ip, &local_ip_len) == 0) 
+	{
+		ip2->saddr = local_ip.sin_addr.s_addr;
+	} 
+	else 
+	{
+		perror("getsockname for raw send");
+		ip2->saddr = inet_addr("0.0.0.0");
+	}
+	ip2->daddr = udpAddress->sin_addr.s_addr;
 
-        // UDP header
-        udp2->source = local_ip.sin_port;
-        udp2->dest = udpAddress->sin_port;
-        udp2->len = htons(sizeof(struct udphdr) + payload_len);
-        udp2->check = 0;
+	// UDP header
+	udp2->source = local_ip.sin_port;
+	udp2->dest = udpAddress->sin_port;
+	udp2->len = htons(sizeof(struct udphdr) + payload_len);
+	udp2->check = 0;
 
-        memcpy((unsigned char*)udp2 + sizeof(struct udphdr), &net_signature, 4);
+	memcpy((unsigned char*)udp2 + sizeof(struct udphdr), &net_signature, 4);
 
-        ip2->check = 0;
-        ip2->check = ip_checksum((unsigned short *)ip2, sizeof(struct iphdr));
+	ip2->check = 0;
+	ip2->check = ip_checksum((unsigned short *)ip2, sizeof(struct iphdr));		// calculate the checksum
 
-        if (sendto(sraw, pkt, pktlen, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress)) < 0) {
-            perror("sendto raw signature");
-        } else {
-            printf("Sent raw 4-byte signature (evil) to %s:%u\n",
-                inet_ntoa(udpAddress->sin_addr), ntohs(udpAddress->sin_port));
-        }
-        close(sraw);
-    }
+	if (sendto(sraw, pkt, pktlen, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress)) < 0) 
+	{
+		perror("sendto raw signature");
+	} 
+	close(sraw);
 
     // Receive the reply on a normal UDP socket
-    {
-        char acc[PACK_LEN];
-        ssize_t rlen = recvfrom(udpsock, acc, sizeof(acc) - 1, 0, (struct sockaddr *)&sender_address, &sender_len);
-        if (rlen < 0) {
-            perror("recvfrom after sending raw evil packet");
-        } else {
-            acc[rlen] = '\0'; // Null-terminate
-            printf("as-string (evil reply): '%s'\n", acc);
-            
-            // Find the last colon ':' in the message, the port number should follow
-            char* last_colon = strrchr(acc, ':');
-            if (last_colon != NULL) {
-                char* num_start = last_colon + 1;
-                while (*num_start == ' ' || *num_start == '\n' || *num_start == '\t') {
-                    num_start++;
-                }
-                
-                long port = strtol(num_start, NULL, 10);
-                if (port > 0 && port <= 65535) {
-                    printf("Successfully parsed evil port: %ld\n", port);
-                    *out_port = (uint16_t)port;
-                }
-            } else {
-                printf("Could not find port number in evil reply.\n");
-            }
-        }
-    }
+	char acc[PACK_LEN];
+	ssize_t rlen = recvfrom(udpsock, acc, sizeof(acc) - 1, 0, (struct sockaddr *)&sender_address, &sender_len);
+	if (rlen < 0) {
+		perror("recvfrom after sending raw evil packet");
+	} 
+	else 
+	{
+		acc[rlen] = '\0'; // Null-terminate
+		
+		// Find the last colon ':' in the message, the port number should follow
+		char* last_colon = strrchr(acc, ':');
+		if (last_colon != NULL) 
+		{
+			char* num_start = last_colon + 1;
+			// get to the number
+			while (*num_start == ' ' || *num_start == '\n' || *num_start == '\t') {
+				num_start++;
+			}
+			
+			long port = strtol(num_start, NULL, 10);	// set port to number from string
+			if (port > 0 && port <= 65535) 
+			{
+				*out_port = (uint16_t)port;
+			}
+		} 
+		else 
+		{
+			printf("Could not find port number in evil reply.\n");
+		}
+	}
 }
 
 
