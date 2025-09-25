@@ -475,114 +475,102 @@ void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 
 void knocking(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_t *address_length_ptr, uint32_t signature, uint16_t secret_port1, uint16_t secret_port2, char *out_phrase)
 {
-    struct sockaddr_in sender_address; // -----------------------------------------------------------------------------------
+    struct sockaddr_in sender_address; // make sure the second address is not the same
     socklen_t sender_len = sizeof(sender_address);
 	char ports[32];
-	// uint16_t secret_port1_net = htons(secret_port1);
-	// int n = snprintf(ports, sizeof(ports), "%u,%u\n", secret_port1_net, (unsigned)secret_port2);
-    int n = snprintf(ports, sizeof(ports), "%u,%u", (unsigned)secret_port1, (unsigned)secret_port2); //---------------------------------------------------------------
-	if (n < 0 || n >= (int)sizeof(ports)) {
+    int n = snprintf(ports, sizeof(ports), "%u,%u", (unsigned)secret_port1, (unsigned)secret_port2); //change secret ports to char
+	
+	// if there is an error in changing secret ports to char
+	if (n < 0 || n >= (int)sizeof(ports)) 
+	{
 		fprintf(stderr, "ports formatting failed/overflow\n");
 		return;
 	}
 	
-	// ssize_t sent = sendto(udpsock, &ports, n, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress)); // -----------------------------------------------------------
-    ssize_t sent = sendto(udpsock, ports, n, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
+	// send ports as char to port
+	ssize_t sent = sendto(udpsock, ports, n, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
 	if (sent != n)
     {
         perror("sendto ports to knocking port failed");
     } 
     else 
     {
-        printf("Sent ports to knocking port, %d bytes: %s\n", n, ports);
-
+        
         // Reply
         socklen_t addrlen2 = sizeof(*udpAddress);
-        // ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)udpAddress, &addrlen2);
-        ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)&sender_address, &sender_len); // -------------------------------------------------------
-        if (rlen < 0) {
+        ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)&sender_address, &sender_len); // recieve from socket
+        if (rlen < 0) 
+        {
             perror("recvfrom after sending signature to checksum port");
         } 
         else 
-        {
-            char saddr2[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &udpAddress->sin_addr, saddr2, sizeof(saddr2));
-            printf("recvfrom returned %zd bytes from %s:%d\n", rlen, saddr2, ntohs(udpAddress->sin_port));
-            // hex dump
-			printf("data (hex):");
-			for (ssize_t i = 0; i < rlen; ++i) printf(" %02x", (unsigned char)buffer[i]);
-			printf("\n");
+		{
 
-			// safe string view
+			char number[5];		// remove?
+
+			// Build the payload, signature and secret phrase
+			char receive_buffer[1024];
+			char bonus_message[PACK_LEN] = {0}; // for the bonus points
+			char knock_payload[1024];
+			uint32_t net_signature = htonl(signature);
+
+			// Copy the 4-byte signature into the payload
+			memcpy(knock_payload, &net_signature, 4);
+
+			// Copy the secret phrase after the signature.
+			// Skip the quote marks at the beginning and end.
+			size_t phrase_len = strlen(out_phrase);
+			size_t actual_phrase_len = 0;
+			if (phrase_len > 2 && out_phrase[0] == '"') 
 			{
-				size_t n = (size_t)rlen;
-				char tmp[n+1];
-				memcpy(tmp, buffer, n);
-				tmp[n] = '\0';
-				printf("as-string: '%s'\n", tmp);
-					char number[5];
+				actual_phrase_len = phrase_len - 2;
+				memcpy(knock_payload + 4, out_phrase + 1, actual_phrase_len);
+			} 
+			else 
+			{
+				actual_phrase_len = phrase_len;
+				memcpy(knock_payload + 4, out_phrase, actual_phrase_len);
+			}
 
-                        // Build the payload, signature and secret phrase
-                        char receive_buffer[1024];
-                        char bonus_message[PACK_LEN] = {0}; // for the bonus points
-                        char knock_payload[1024];
-                        uint32_t net_signature = htonl(signature);
+			size_t total_payload_len = 4 + actual_phrase_len;
 
-                        // Copy the 4-byte signature into the payload
-                        memcpy(knock_payload, &net_signature, 4);
+			// Perform the knocks
+			char* knock_port_str = strtok(tmp, ",");
+			while (knock_port_str != NULL)
+			{
+				uint16_t knock_port = (uint16_t)strtol(knock_port_str, NULL, 10);
+				if (knock_port > 0)
+				{
+					// Set the destination to the correct port
+					udpAddress->sin_port = htons(knock_port);
 
-                        // Copy the secret phrase after the signature.
-                        // Skip the quote marks at the beginning and end.
-                        size_t phrase_len = strlen(out_phrase);
-                        size_t actual_phrase_len = 0;
-                        if (phrase_len > 2 && out_phrase[0] == '"') {
-                            actual_phrase_len = phrase_len - 2;
-                            memcpy(knock_payload + 4, out_phrase + 1, actual_phrase_len);
-                        } else {
-                            actual_phrase_len = phrase_len;
-                            memcpy(knock_payload + 4, out_phrase, actual_phrase_len);
-                        }
+					// Send the payload
+					sendto(udpsock, knock_payload, total_payload_len, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
 
-                        size_t total_payload_len = 4 + actual_phrase_len;
-
-                        // Perform the knocks
-                        char* knock_port_str = strtok(tmp, ",");
-                        while (knock_port_str != NULL)
-                        {
-                            uint16_t knock_port = (uint16_t)strtol(knock_port_str, NULL, 10);
-                            if (knock_port > 0)
-                            {
-                                printf("Knocking on port %u...\n", knock_port);
-                                
-                                // Set the destination to the correct port
-                                udpAddress->sin_port = htons(knock_port);
-
-                                // Send the payload
-                                sendto(udpsock, knock_payload, total_payload_len, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
-
-                                // Listen to the reply to the knock
-                                rlen = recvfrom(udpsock, receive_buffer, sizeof(receive_buffer) - 1, 0, (struct sockaddr *)&sender_address, &sender_len);
-                                if (rlen > 0) {
-                                    receive_buffer[rlen] = '\0';
-                                    // Add the reply to bonus message
-                                    strncat(bonus_message, receive_buffer, sizeof(bonus_message) - strlen(bonus_message) - 1);
-        }
-
-                            }
-                            // Get the next port from the string
-                            knock_port_str = strtok(NULL, ",");
-                        }
-				
-                // Wait for message
-                printf("\nAll knocks sent. Waiting for reply...\n");
-                rlen = recvfrom(udpsock, buffer, PACK_LEN - 1, 0, (struct sockaddr *)&sender_address, &sender_len);
-                if (rlen < 0) {
-                    perror("recvfrom (waiting for message)");
-                } else {
-                    buffer[rlen] = '\0';
-                    printf("\n--- SERVER MESSAGE ---\n%s\n--------------------------\n", buffer);
-                    printf("\n--- BONUS MESSAGE ---\n%s\n---------------------\n", bonus_message);
-                }
+					// Listen to the reply to the knock
+					rlen = recvfrom(udpsock, receive_buffer, sizeof(receive_buffer) - 1, 0, (struct sockaddr *)&sender_address, &sender_len);
+					if (rlen > 0) 
+					{
+						receive_buffer[rlen] = '\0';
+						// Add the reply to bonus message
+						strncat(bonus_message, receive_buffer, sizeof(bonus_message) - strlen(bonus_message) - 1);
+					}
+				}
+			// Get the next port from the string
+			knock_port_str = strtok(NULL, ",");
+			}
+			
+			// recieve message
+			rlen = recvfrom(udpsock, buffer, PACK_LEN - 1, 0, (struct sockaddr *)&sender_address, &sender_len);
+			if (rlen < 0) 
+			{
+				perror("recvfrom (waiting for message)");
+			} 
+			else 
+			{
+				buffer[rlen] = '\0';
+				printf("\n--- SERVER MESSAGE ---\n%s\n--------------------------\n", buffer);
+				printf("\n--- BONUS MESSAGE ---\n%s\n---------------------\n", bonus_message);
 			}
 		}
 	}
