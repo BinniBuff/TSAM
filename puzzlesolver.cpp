@@ -9,7 +9,6 @@
 #include <array>
 #include <cstring>
 #include <stdint.h>
-// #include <linux/ip.h>
 #include <linux/udp.h>
 #include <stdbool.h>
 #include <netinet/ip_icmp.h>
@@ -363,56 +362,40 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
 
 void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_t *address_length_ptr, uint32_t signature, uint16_t secret_port, char *out_phrase)
 {
-    struct sockaddr_in sender_address;  // -----------------------
-	uint32_t net_signature = htonl(signature);
+    struct sockaddr_in sender_address;  // create new sender address for the second message
+	uint32_t net_signature = htonl(signature);   // signature needs to be network byte order before sent
     ssize_t sent = sendto(udpsock, &net_signature, 4, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
 
+	// if sending fails
     if (sent != 4)
     {
-        perror("sendto signature to evil port failed");
+        perror("sendto signature to checksum port failed");
     } 
+    // successfully sent the signature
     else 
     {
-        printf("Sent 4-byte signature to checksum port (net order): %02x%02x%02x%02x\n", ((unsigned char *)&net_signature)[0], ((unsigned char *)&net_signature)[1], ((unsigned char *)&net_signature)[2], ((unsigned char *)&net_signature)[3]);
-
-        // Reply
-        //------------------------------------------------------------------------------------------------------------
-        // socklen_t addrlen2 = sizeof(*udpAddress);
-        // ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)udpAddress, &addrlen2);
         socklen_t sender_len = sizeof(sender_address);
+        // recieve from port to get instructions
         ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)&sender_address, &sender_len);
-        //------------------------------------------------------------------------------------------------------------
+        
+        // recieving failed
         if (rlen < 0) {
             perror("recvfrom after sending signature to checksum port");
         } 
         else 
         {
-            char saddr2[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &udpAddress->sin_addr, saddr2, sizeof(saddr2));
-            printf("recvfrom returned %zd bytes from %s:%d\n", rlen, saddr2, ntohs(udpAddress->sin_port));
-            // hex dump
-			printf("data (hex):");
-			for (ssize_t i = 0; i < rlen; ++i) printf(" %02x", (unsigned char)buffer[i]);
-			printf("\n");
-
-			// safe string view
-			{
-				size_t n = (size_t)rlen;
-				char tmp[n+1];
-				memcpy(tmp, buffer, n);
-				tmp[n] = '\0';
-				printf("as-string: '%s'\n", tmp);
-			}
-			uint32_t ip_from_checksum;
+            
+			uint32_t ip_from_checksum;   // sender IP from the port
 			memcpy(&ip_from_checksum, buffer + rlen - 4, 4);
-			uint16_t checksum;
+			uint16_t checksum;    // checksum from the port that we need to match
 			memcpy(&checksum, buffer + rlen - 6, 2);
 			
-			uint8_t headers[20 + 8 + 2] = {0};
-			struct iphdr *ip = (struct iphdr *)headers;
-			struct udphdr *udp = (struct udphdr *)(headers + sizeof(struct iphdr));
-			uint8_t *pl  = headers + 20 + 8;
+			uint8_t headers[20 + 8 + 2] = {0};			// make sure to have 2 extra bytes so the checksum is correct
+			struct iphdr *ip = (struct iphdr *)headers;		// make IP header
+			struct udphdr *udp = (struct udphdr *)(headers + sizeof(struct iphdr));		// make UDP header
+			uint8_t *pl  = headers + 20 + 8;		// for calculating the checksum later
 			
+			// Fill in the IP header information needed
 			ip->ihl      = 5;                             
 			ip->version  = 4;
 			ip->tos      = 0;
@@ -426,11 +409,13 @@ void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 			ip->check    = 0;
 			ip->check    = ip_checksum(ip, sizeof(*ip));
 			
+			// Fill in the UDP header information needed
 			udp->source = htons(secret_port);                  
 			udp->dest   = udpAddress->sin_port;           
 			udp->len    = htons(sizeof(struct udphdr) + 2);
 			udp->check = 0; 
 			
+			// calculate the checksum
 			uint16_t calc0 = udp_checksum_ipv4(ip, udp, nullptr, 0);
 			
 			// expected checksum (host order)
@@ -450,12 +435,12 @@ void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 			uint16_t K = (uint16_t)ksum;
 			
 			*(uint16_t*)pl = htons(K);
-			uint16_t final = udp_checksum_ipv4(ip, udp, pl, 2);
+			uint16_t final = udp_checksum_ipv4(ip, udp, pl, 2);		// calculate the final checksum that matches what the port gave
 			udp->check = final;
 			
-			printf("expected=0x%04x  calc0=0x%04x  F=0x%04x  K=0x%04x  final=0x%04x\n", Ehost, ntohs(calc0), target, K, ntohs(final));
-			
+			// Send the headers inside the message
 			ssize_t sent_2 = sendto(udpsock, headers, sizeof(headers), 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
+			// If it failed
 			if (sent_2 != sizeof(headers))
 			{
 				perror("sending second message to checksum failed");
@@ -463,34 +448,23 @@ void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 			}
 			else
 			{
-				// ssize_t rlen2 = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)udpAddress, &addrlen2);
-                ssize_t rlen2 = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)&sender_address, &sender_len); //--------------------------------------------
+                ssize_t rlen2 = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)&sender_address, &sender_len); // recieve from port after sending checksum
 				if (rlen2 < 0) {
 					perror("recvfrom error after sending second message to checksum port");
 				} 
 				else 
 				{
-					char saddr2[INET_ADDRSTRLEN];
-					inet_ntop(AF_INET, &udpAddress->sin_addr, saddr2, sizeof(saddr2));
-					printf("recvfrom returned %zd bytes from %s:%d\n", rlen2, saddr2, ntohs(udpAddress->sin_port));
-					// hex dump
-					printf("data (hex):");
-					for (ssize_t i = 0; i < rlen2; ++i) printf(" %02x", (unsigned char)buffer[i]);
-					printf("\n");
-
-					// safe string view
+					// long way to do it but here we take the secret phrase and memcpy it to the char array in main
+					size_t n = (size_t)rlen2;
+					char tmp[n+1];
+					memcpy(tmp, buffer, n);
+					tmp[n] = '\0';
+					printf("as-string: '%s'\n", tmp);
+					for (int j = 0; j < n; j++)
 					{
-						size_t n = (size_t)rlen2;
-						char tmp[n+1];
-						memcpy(tmp, buffer, n);
-						tmp[n] = '\0';
-						printf("as-string: '%s'\n", tmp);
-						for (int j = 0; j < n; j++)
+						if (tmp[j] == '"')
 						{
-							if (tmp[j] == '"')
-							{
-								memcpy(out_phrase, tmp + j, n - j);
-							}
+							memcpy(out_phrase, tmp + j, n - j);
 						}
 					}
 				}
