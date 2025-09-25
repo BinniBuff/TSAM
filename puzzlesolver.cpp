@@ -247,7 +247,7 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
     memcpy(secret_message + char_arr_index, users, users_len);
     char_arr_index += users_len;        // Move index to end
 
-    secret_message[char_arr_index] = '\0'; // ensure safe printing (and not change logic)
+    secret_message[char_arr_index] = '\0'; // ensure safe printing
 
     if(sendto(udpsock, secret_message, char_arr_index, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress)) < 0)
     {
