@@ -225,15 +225,12 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
 {
     struct sockaddr_in sender_address;
     socklen_t sender_address_len = sizeof(sender_address);
-    // address_length_ptr is a pointer to the socklen_t used by the caller
-    // socklen_t address_length = *address_length_ptr;
-    char answer[4096];
+    char answer[4096]; // fjarlægja?
 
-    *out_signature = 0;
-    *out_port = 0;
+    *out_signature = 0;		// fjarlægja ?
+    *out_port = 0;			// fjarlægja ?
 
-    cout << "In secret!" << endl;
-    memset(buffer, 0, 4096);
+    memset(buffer, 0, 4096);		// fjarlægja ?
     u_int32_t secret_num = 0x55555555;      // or 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101
     uint32_t secret_num_ordered = htonl(secret_num);    // Secret number in network order
     const char users[] = "brynjolfur23,sigurjong22";
@@ -242,62 +239,44 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
     secret_message[char_arr_index] = 'S';    // S is put in index 0, in secret_message
     char_arr_index++;                        // incrament index
 
-    //secret_message.resize(1 + sizeof(secret_num));
-    //memcpy(secret_message[1], &secret_num, sizeof(secret_num));
     memcpy(secret_message + char_arr_index, &secret_num_ordered, 4);    // Go into secret_message, then move char_arr_index amount of spaces and put secret_num_ordered there
     char_arr_index += 4;    // Move the index by 4 bytes
 
     size_t users_len = strlen(users);
 
-    //strcpy(secret_message + char_arr_index, users);            // extend secret_message by users
     memcpy(secret_message + char_arr_index, users, users_len);
     char_arr_index += users_len;        // Move index to end
 
     secret_message[char_arr_index] = '\0'; // ensure safe printing (and not change logic)
 
-    cout << "\n---- ***" << secret_message << "*** ----\n" << endl;
     if(sendto(udpsock, secret_message, char_arr_index, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress)) < 0)
     {
         perror("Could not connect");
         close(udpsock);
         exit(0);
     }
-    // ssize_t resp_len = recvfrom(udpsock, buffer, PACK_LEN - 1, 0, (struct sockaddr *)udpAddress, &address_length);
+    // recieve response from the secret port
     ssize_t resp_len = recvfrom(udpsock, buffer, PACK_LEN - 1, 0, (struct sockaddr *)&sender_address, &sender_address_len);
     if (resp_len < 0)
     {
         // no reply timeout, or error
         perror("recvfrom (waiting for secret reply)");
-    } else {
-        // print length and sender IP:port
-        char saddr[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &udpAddress->sin_addr, saddr, sizeof(saddr));
-        printf("recvfrom returned %zd bytes from %s:%d\n", resp_len, saddr, ntohs(udpAddress->sin_port));
-
-        // hex dump
-        printf("data (hex):");
-        for (ssize_t i = 0; i < resp_len; ++i) printf(" %02x", (unsigned char)buffer[i]);
-        printf("\n");
-
-        // safe string view
-        {
-            size_t n = (size_t)resp_len;
-            char tmp[n+1];
-            memcpy(tmp, buffer, n);
-            tmp[n] = '\0';
-            printf("as-string: '%s'\n", tmp);
-        }
+    } 
+    else 
+    {
+        
 
         // If this is the 5-byte S.E.C.R.E.T. reply, parse it and print values
         if (resp_len >= 5)
         {
+			// get the group ID and the challenge
             uint8_t group_id = (uint8_t)buffer[0];
-            answer[0] = buffer[0]; //-------------------------------------------------------------------------
+            answer[0] = buffer[0]; // fjarlægja?
             uint32_t net_challenge;
             memcpy(&net_challenge, buffer + 1, 4);
             uint32_t challenge = ntohl(net_challenge);
-            printf("Parsed S.E.C.R.E.T. reply -> group_id=%u, challenge=0x%08x (%u)\n", (unsigned)group_id, challenge, (unsigned)challenge);
-
+            
+            // XOR the challenge with the secret number to get the signature
             uint32_t signature = challenge ^ secret_num;
             *out_signature = signature;      // The signature
 
@@ -308,54 +287,48 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
             five_byte_msg[0] = group_id;
             memcpy(five_byte_msg + 1, &net_signature, 4);
 
+			//sending the signature
             ssize_t sent = sendto(udpsock, five_byte_msg, sizeof(five_byte_msg), 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
             if (sent != (ssize_t)sizeof(five_byte_msg))
             {
                 perror("sendto signature failed");
-            } else {
-                printf("Sent signature for group %u: 0x%08x\n", (unsigned)group_id, signature);
-
             }
 
+            // recieve the port from secret
             char final_buf[PACK_LEN];
             socklen_t final_addr_len = sizeof(*udpAddress);
-            // ssize_t final_len = recvfrom(udpsock, final_buf, PACK_LEN, 0, (struct sockaddr *)udpAddress, &final_addr_len);
             ssize_t final_len = recvfrom(udpsock, final_buf, PACK_LEN, 0, (struct sockaddr *)&sender_address, &sender_address_len);
             if (final_len < 0)
             {
                 perror("recvfrom (waiting for secret-port)");
-            } else {
-                printf("data (hex):");
-                for (ssize_t i = 0; i < final_len; ++i) printf(" %02x", (unsigned char)final_buf[i]);
-                printf("\n");
+            } 
+            else 
+            {
+				size_t n = (size_t)final_len;
+				char tmp[n+1];
+				memcpy(tmp, final_buf, n);
+				tmp[n] = '\0'; // Null terminate the received data
 
-                {
-                    size_t n = (size_t)final_len;
-                    char tmp[n+1];
-                    memcpy(tmp, final_buf, n);
-                    tmp[n] = '\0'; // Null terminate the received data
-                    printf("Full reply from secrete: '%s'\n", tmp);
-
-                    // Find the last colon ':' in the message, the port number should follow
-                    char* last_colon = strrchr(tmp, ':');
-                    if (last_colon != NULL) {
-                        // Move pointer past the colon and any whitespace
-                        char* num_start = last_colon + 1;
-                        while (*num_start == ' ') {
-                            num_start++;
-                        }
-                        
-                        long port = strtol(num_start, NULL, 10);
-                        if (port > 0 && port <= 65535) {
-                            printf("Successfully parsed secret port: %ld\n", port);
-                            *out_port = (uint16_t)port;
-                        } else {
-                            printf("Failed to parse port from substring: '%s'\n", num_start);
-                        }
-                    } else {
-                        printf("Could not find ':' in secrete reply.\n");
-                    }
-                }
+				// Find the last colon ':' in the message, the port number should follow
+				char* last_colon = strrchr(tmp, ':');
+				if (last_colon != NULL) {
+					// Move pointer past the colon and any whitespace
+					char* num_start = last_colon + 1;
+					while (*num_start == ' ') {
+						num_start++;
+					}
+					
+					// save the port after converting it from string
+					long port = strtol(num_start, NULL, 10);
+					if (port > 0 && port <= 65535) {
+						*out_port = (uint16_t)port;
+					} else {
+						printf("Failed to parse port from substring: '%s'\n", num_start);
+					}
+				} else 
+				{
+					printf("Could not find ':' in secrete reply.\n");
+				}
 
             }
         }
