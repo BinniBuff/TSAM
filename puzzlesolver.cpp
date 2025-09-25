@@ -481,8 +481,7 @@ void knocking(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
     int n = snprintf(ports, sizeof(ports), "%u,%u", (unsigned)secret_port1, (unsigned)secret_port2); //change secret ports to char
 	
 	// if there is an error in changing secret ports to char
-	if (n < 0 || n >= (int)sizeof(ports)) 
-	{
+	if (n < 0 || n >= (int)sizeof(ports)) {
 		fprintf(stderr, "ports formatting failed/overflow\n");
 		return;
 	}
@@ -495,17 +494,21 @@ void knocking(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
     } 
     else 
     {
-        
+        printf("Sent ports to knocking port, %d bytes: %s\n", n, ports);
+
         // Reply
         socklen_t addrlen2 = sizeof(*udpAddress);
-        ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)&sender_address, &sender_len); // recieve from socket
-        if (rlen < 0) 
-        {
+        // ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)udpAddress, &addrlen2);
+        ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)&sender_address, &sender_len); // -------------------------------------------------------
+        if (rlen < 0) {
             perror("recvfrom after sending signature to checksum port");
         } 
         else 
-		{
-
+        {
+			size_t n = (size_t)rlen;
+			char tmp[n+1];
+			memcpy(tmp, buffer, n);
+			tmp[n] = '\0';
 			char number[5];		// remove?
 
 			// Build the payload, signature and secret phrase
@@ -521,13 +524,10 @@ void knocking(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 			// Skip the quote marks at the beginning and end.
 			size_t phrase_len = strlen(out_phrase);
 			size_t actual_phrase_len = 0;
-			if (phrase_len > 2 && out_phrase[0] == '"') 
-			{
+			if (phrase_len > 2 && out_phrase[0] == '"') {
 				actual_phrase_len = phrase_len - 2;
 				memcpy(knock_payload + 4, out_phrase + 1, actual_phrase_len);
-			} 
-			else 
-			{
+			} else {
 				actual_phrase_len = phrase_len;
 				memcpy(knock_payload + 4, out_phrase, actual_phrase_len);
 			}
@@ -541,6 +541,8 @@ void knocking(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 				uint16_t knock_port = (uint16_t)strtol(knock_port_str, NULL, 10);
 				if (knock_port > 0)
 				{
+					printf("Knocking on port %u...\n", knock_port);
+					
 					// Set the destination to the correct port
 					udpAddress->sin_port = htons(knock_port);
 
@@ -555,19 +557,18 @@ void knocking(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 						// Add the reply to bonus message
 						strncat(bonus_message, receive_buffer, sizeof(bonus_message) - strlen(bonus_message) - 1);
 					}
+
 				}
-			// Get the next port from the string
-			knock_port_str = strtok(NULL, ",");
+				// Get the next port from the string
+				knock_port_str = strtok(NULL, ",");
 			}
 			
-			// recieve message
+			// Wait for message
+			printf("\nAll knocks sent. Waiting for reply...\n");
 			rlen = recvfrom(udpsock, buffer, PACK_LEN - 1, 0, (struct sockaddr *)&sender_address, &sender_len);
-			if (rlen < 0) 
-			{
+			if (rlen < 0) {
 				perror("recvfrom (waiting for message)");
-			} 
-			else 
-			{
+			} else {
 				buffer[rlen] = '\0';
 				printf("\n--- SERVER MESSAGE ---\n%s\n--------------------------\n", buffer);
 				printf("\n--- BONUS MESSAGE ---\n%s\n---------------------\n", bonus_message);
