@@ -33,6 +33,7 @@ static uint16_t ip_checksum(const void* vdata, size_t length) {
     return htons(~acc);
 }
 
+// udp_checksum
 static uint16_t udp_checksum_ipv4(const iphdr* iph, const udphdr* udph, const uint8_t* payload, size_t plen) {
     struct {
         uint32_t saddr;
@@ -45,20 +46,19 @@ static uint16_t udp_checksum_ipv4(const iphdr* iph, const udphdr* udph, const ui
     psh.daddr = iph->daddr;
     psh.zero = 0;
     psh.protocol = IPPROTO_UDP;
-    psh.udp_len = udph->len; // already network order
+    psh.udp_len = udph->len;
 
     uint32_t sum = 0;
 
     auto add = [&](const uint8_t* data, size_t len){
         while (len > 1) { sum += *(const uint16_t*)data; data += 2; len -= 2; }
-        if (len) sum += *(const uint8_t*)data << 8; // odd byte
+        if (len) sum += *(const uint8_t*)data << 8;
     };
 
     add((uint8_t*)&psh, sizeof(psh));
     add((const uint8_t*)udph, sizeof(*udph));
     add(payload, plen);
 
-    // fold carries
     while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
     uint16_t res = ~((uint16_t)sum);
     if (res == 0) res = 0xffff;
@@ -67,7 +67,7 @@ static uint16_t udp_checksum_ipv4(const iphdr* iph, const udphdr* udph, const ui
 
 
 void send_bonus_ping(int group_id, const char* ip_address) {
-    // Create the raw socket for ICMP
+    // Create raw socket for ICMP
     int icmp_socket = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (icmp_socket < 0) {
         perror("bonus socket");
@@ -395,10 +395,10 @@ void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 			// calculate the checksum
 			uint16_t calc0 = udp_checksum_ipv4(ip, udp, nullptr, 0);
 			
-			// expected checksum (host order)
+			// expected checksum, host order
 			uint16_t Ehost = ntohs(checksum);
 
-			// baseline checksum you computed with len=10 and no payload (host order)
+			// baseline checksum computed with len=10 and no payload, in host order
 			uint16_t calc0_host = ntohs(calc0);
 
 			// target folded sum is ~E (host)
