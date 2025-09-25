@@ -118,7 +118,7 @@ void evil(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_t *
 {
     struct sockaddr_in sender_address;
     socklen_t sender_len = sizeof(sender_address);
-    *out_port = 0; // Initialize output port // fjarlægja
+    //*out_port = 0; // Initialize output port // fjarlægja
 
     uint32_t net_signature = htonl(signature);
 
@@ -225,12 +225,12 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
 {
     struct sockaddr_in sender_address;
     socklen_t sender_address_len = sizeof(sender_address);
-    char answer[4096]; // fjarlægja?
+    // char answer[4096]; // fjarlægja?
 
-    *out_signature = 0;		// fjarlægja ?
-    *out_port = 0;			// fjarlægja ?
+    // *out_signature = 0;		// fjarlægja ?
+    // *out_port = 0;			// fjarlægja ?
 
-    memset(buffer, 0, 4096);		// fjarlægja ?
+    // memset(buffer, 0, 4096);		// fjarlægja ?
     u_int32_t secret_num = 0x55555555;      // or 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101
     uint32_t secret_num_ordered = htonl(secret_num);    // Secret number in network order
     const char users[] = "brynjolfur23,sigurjong22";
@@ -271,7 +271,7 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
         {
 			// get the group ID and the challenge
             uint8_t group_id = (uint8_t)buffer[0];
-            answer[0] = buffer[0]; // fjarlægja?
+            // answer[0] = buffer[0]; // fjarlægja?
             uint32_t net_challenge;
             memcpy(&net_challenge, buffer + 1, 4);
             uint32_t challenge = ntohl(net_challenge);
@@ -686,8 +686,8 @@ int main(int argc, char *argv[])
 			knocking(udpsock, &udpAddress, buffer, &address_length, secret_signature, secret_port, evil_port_num, the_secret_phrase);
 	    	printf("After EXPSTN: secret phrase: '%s'\n", the_secret_phrase);
 		}
-        // The bonus
-        send_bonus_ping(19, "130.208.246.98");
     }
+    // The bonus
+    send_bonus_ping(19, "130.208.246.98");
     close(udpsock);
 }
