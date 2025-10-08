@@ -1,9 +1,9 @@
-all: client server
+all: client tsamgroup23
 
-server: server.cpp
-	g++ -o $@ server.cpp
+tsamgroup23: tsamgroup23.cpp
+	g++ -o $@ tsamgroup23.cpp
 client: client.cpp
 	g++ -o $@ client.cpp
 
 clean:
-	rm server client
+	rm tsamgroup23 client
