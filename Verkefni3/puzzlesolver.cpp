@@ -33,6 +33,7 @@ static uint16_t ip_checksum(const void* vdata, size_t length) {
     return htons(~acc);
 }
 
+// udp_checksum
 static uint16_t udp_checksum_ipv4(const iphdr* iph, const udphdr* udph, const uint8_t* payload, size_t plen) {
     struct {
         uint32_t saddr;
@@ -45,20 +46,19 @@ static uint16_t udp_checksum_ipv4(const iphdr* iph, const udphdr* udph, const ui
     psh.daddr = iph->daddr;
     psh.zero = 0;
     psh.protocol = IPPROTO_UDP;
-    psh.udp_len = udph->len; // already network order
+    psh.udp_len = udph->len;
 
     uint32_t sum = 0;
 
     auto add = [&](const uint8_t* data, size_t len){
         while (len > 1) { sum += *(const uint16_t*)data; data += 2; len -= 2; }
-        if (len) sum += *(const uint8_t*)data << 8; // odd byte
+        if (len) sum += *(const uint8_t*)data << 8;
     };
 
     add((uint8_t*)&psh, sizeof(psh));
     add((const uint8_t*)udph, sizeof(*udph));
     add(payload, plen);
 
-    // fold carries
     while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
     uint16_t res = ~((uint16_t)sum);
     if (res == 0) res = 0xffff;
@@ -67,7 +67,7 @@ static uint16_t udp_checksum_ipv4(const iphdr* iph, const udphdr* udph, const ui
 
 
 void send_bonus_ping(int group_id, const char* ip_address) {
-    // Create the raw socket for ICMP
+    // Create raw socket for ICMP
     int icmp_socket = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (icmp_socket < 0) {
         perror("bonus socket");
@@ -118,7 +118,6 @@ void evil(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_t *
 {
     struct sockaddr_in sender_address;
     socklen_t sender_len = sizeof(sender_address);
-    *out_port = 0; // Initialize output port // fjarlægja
 
     uint32_t net_signature = htonl(signature);
 
@@ -225,12 +224,7 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
 {
     struct sockaddr_in sender_address;
     socklen_t sender_address_len = sizeof(sender_address);
-    char answer[4096]; // fjarlægja?
 
-    *out_signature = 0;		// fjarlægja ?
-    *out_port = 0;			// fjarlægja ?
-
-    memset(buffer, 0, 4096);		// fjarlægja ?
     u_int32_t secret_num = 0x55555555;      // or 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101 0101-0101
     uint32_t secret_num_ordered = htonl(secret_num);    // Secret number in network order
     const char users[] = "brynjolfur23,sigurjong22";
@@ -247,7 +241,7 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
     memcpy(secret_message + char_arr_index, users, users_len);
     char_arr_index += users_len;        // Move index to end
 
-    secret_message[char_arr_index] = '\0'; // ensure safe printing (and not change logic)
+    secret_message[char_arr_index] = '\0'; // ensure safe printing
 
     if(sendto(udpsock, secret_message, char_arr_index, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress)) < 0)
     {
@@ -266,12 +260,11 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
     {
         
 
-        // If this is the 5-byte S.E.C.R.E.T. reply, parse it and print values
+        // If this is the 5-byte secret reply, parse it and print values
         if (resp_len >= 5)
         {
 			// get the group ID and the challenge
             uint8_t group_id = (uint8_t)buffer[0];
-            answer[0] = buffer[0]; // fjarlægja?
             uint32_t net_challenge;
             memcpy(&net_challenge, buffer + 1, 4);
             uint32_t challenge = ntohl(net_challenge);
@@ -340,7 +333,7 @@ void secrete(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_
 void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen_t *address_length_ptr, uint32_t signature, uint16_t secret_port, char *out_phrase)
 {
     struct sockaddr_in sender_address;  // create new sender address for the second message
-	uint32_t net_signature = htonl(signature);   // signature needs to be network byte order before sent
+	uint32_t net_signature = htonl(signature);   // signature in network byte order before sending
     ssize_t sent = sendto(udpsock, &net_signature, 4, 0, (struct sockaddr *)udpAddress, sizeof(*udpAddress));
 
 	// if sending fails
@@ -364,7 +357,7 @@ void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
             
 			uint32_t ip_from_checksum;   // sender IP from the port
 			memcpy(&ip_from_checksum, buffer + rlen - 4, 4);
-			uint16_t checksum;    // checksum from the port that we need to match
+			uint16_t checksum;    // checksum from the port that needs to match
 			memcpy(&checksum, buffer + rlen - 6, 2);
 			
 			uint8_t headers[20 + 8 + 2] = {0};			// make sure to have 2 extra bytes so the checksum is correct
@@ -395,10 +388,10 @@ void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 			// calculate the checksum
 			uint16_t calc0 = udp_checksum_ipv4(ip, udp, nullptr, 0);
 			
-			// expected checksum (host order)
+			// expected checksum, host order
 			uint16_t Ehost = ntohs(checksum);
 
-			// baseline checksum you computed with len=10 and no payload (host order)
+			// baseline checksum computed with len=10 and no payload, in host order
 			uint16_t calc0_host = ntohs(calc0);
 
 			// target folded sum is ~E (host)
@@ -408,7 +401,7 @@ void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 			// A minimal solution is: K = fold( target + calc0_host )
 			uint32_t ksum = (uint32_t)target + (uint32_t)calc0_host;
 			ksum = (ksum & 0xFFFF) + (ksum >> 16);   // end-around carry
-			ksum = (ksum & 0xFFFF) + (ksum >> 16);   // (once more, just in case)
+			ksum = (ksum & 0xFFFF) + (ksum >> 16);   // once more, just in case
 			uint16_t K = (uint16_t)ksum;
 			
 			*(uint16_t*)pl = htons(K);
@@ -436,7 +429,7 @@ void checksum(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 					char tmp[n+1];
 					memcpy(tmp, buffer, n);
 					tmp[n] = '\0';
-					printf("as-string: '%s'\n", tmp);
+					printf("'%s'\n", tmp);
 					for (int j = 0; j < n; j++)
 					{
 						if (tmp[j] == '"')
@@ -475,8 +468,7 @@ void knocking(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 
         // Reply
         socklen_t addrlen2 = sizeof(*udpAddress);
-        // ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)udpAddress, &addrlen2);
-        ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)&sender_address, &sender_len); // -------------------------------------------------------
+        ssize_t rlen = recvfrom(udpsock, buffer, PACK_LEN, 0, (struct sockaddr *)&sender_address, &sender_len);
         if (rlen < 0) {
             perror("recvfrom after sending signature to checksum port");
         } 
@@ -486,7 +478,6 @@ void knocking(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 			char tmp[n+1];
 			memcpy(tmp, buffer, n);
 			tmp[n] = '\0';
-			char number[5];		// remove?
 
 			// Build the payload, signature and secret phrase
 			char receive_buffer[1024];
@@ -536,7 +527,7 @@ void knocking(int udpsock, struct sockaddr_in *udpAddress, char *buffer, socklen
 					}
 
 				}
-				// Get the next port from the string
+				// Get the next port
 				knock_port_str = strtok(NULL, ",");
 			}
 			
@@ -591,18 +582,18 @@ int main(int argc, char *argv[])
 
     socklen_t address_length = sizeof(udpAddress);
 
+    // set timeout of 1 second
     struct timeval timeout;
     timeout.tv_sec = 1;
     timeout.tv_usec = 0;
 	
-	// set timeout of 1 second
     if (setsockopt(udpsock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
     {
         perror("timeout failed");
         exit(0);
     }
     
-    udpAddress.sin_family = AF_INET;		// færði úr for lykkjunum, sjáum hvort þurfi að færa aftur
+    udpAddress.sin_family = AF_INET;
 
     for (int i = 0; i < portCount; ++i)
     {
@@ -672,7 +663,7 @@ int main(int argc, char *argv[])
         {
             printf("Entering evil.\n");
             evil(udpsock, &udpAddress, buffer, &address_length, secret_signature, &evil_port_num);
-            printf("After evil: secret_port=%u\n", (unsigned)evil_port_num);
+            printf("After evil: evil_port=%u\n", (unsigned)evil_port_num);
         }
         else if (i == 2)
         {
@@ -684,10 +675,9 @@ int main(int argc, char *argv[])
         {
 			printf("Entering EXPSTN.\n");
 			knocking(udpsock, &udpAddress, buffer, &address_length, secret_signature, secret_port, evil_port_num, the_secret_phrase);
-	    	printf("After EXPSTN: secret phrase: '%s'\n", the_secret_phrase);
 		}
-        // The bonus
-        send_bonus_ping(19, "130.208.246.98");
     }
+    // The bonus
+    send_bonus_ping(19, "130.208.246.98");
     close(udpsock);
 }
