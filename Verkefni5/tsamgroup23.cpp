@@ -26,6 +26,7 @@
 #include <sstream>
 #include <thread>
 #include <map>
+#include <charconv>
 
 #include <unistd.h>
 
@@ -51,6 +52,20 @@ class Client
     ~Client(){}            // Virtual destructor defined for base class
 };
 
+// Simple class for handling connections from servers.
+//
+// Server(int socket) - socket to send/receive traffic from server.
+class Server
+{
+  public:
+    int sock;              // socket of server connection
+    std::string name;           // Limit length of name of server's user
+
+    Server(int socket) : sock(socket){} 
+
+    ~Server(){}            // Virtual destructor defined for base class
+};
+
 // Note: map is not necessarily the most efficient method to use here,
 // especially for a server with large numbers of simulataneous connections,
 // where performance is also expected to be an issue.
@@ -59,6 +74,7 @@ class Client
 // (indexed on socket no.) sacrificing memory for speed.
 
 std::map<int, Client*> clients; // Lookup table for per Client information
+std::map<int, Server*> servers; // Lookup table for instructor servers information, makes it easier to throw out instructors when room is needed for new connections
 
 // Open socket for specified port.
 //
@@ -147,6 +163,97 @@ void closeClient(int clientSocket, fd_set *openSockets, int *maxfds)
 
 }
 
+void connectServer(const char *IP, const char *port)
+{
+   struct addrinfo hints, *svr;              // Network host entry for server
+   struct sockaddr_in serv_addr;           // Socket address for server
+   int serverSocket;                         // Socket used for server 
+   int nwrite;                               // No. bytes written to server
+   int nread;                                  // Bytes read from socket
+   char buffer[1025];                        // buffer for writing to server
+   char in_buffer[5000];                        // buffer for receiving from server
+   int set = 1;                              // Toggle for setsockopt
+
+   hints.ai_family   = AF_INET;            // IPv4 only addresses
+   hints.ai_socktype = SOCK_STREAM;
+
+   memset(&hints,   0, sizeof(hints));
+
+   if(getaddrinfo(IP, port, &hints, &svr) != 0)
+   {
+       perror("getaddrinfo failed: ");
+       exit(0);
+   }
+
+   struct hostent *server;
+   server = gethostbyname(IP);
+
+   bzero((char *) &serv_addr, sizeof(serv_addr));
+   serv_addr.sin_family = AF_INET;
+   bcopy((char *)server->h_addr,
+      (char *)&serv_addr.sin_addr.s_addr,
+      server->h_length);
+   serv_addr.sin_port = htons(atoi(port));
+
+   serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+   // Turn on SO_REUSEADDR to allow socket to be quickly reused after 
+   // program exit.
+
+   if(setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &set, sizeof(set)) < 0)
+   {
+       printf("Failed to set SO_REUSEADDR for port %s\n", port);
+       perror("setsockopt failed: ");
+   }
+
+   
+   if(connect(serverSocket, (struct sockaddr *)&serv_addr, sizeof(serv_addr) )< 0)
+   {
+       // EINPROGRESS means that the connection is still being setup. Typically this
+       // only occurs with non-blocking sockets. (The serverSocket above is explicitly
+       // not in non-blocking mode, so this check here is just an example of how to
+       // handle this properly.)
+       if(errno != EINPROGRESS)
+       {
+         printf("Failed to open socket to server: %s\n", IP);
+         perror("Connect failed: ");
+         exit(0);
+       }
+   }
+   
+   memset(buffer, 0, sizeof(buffer));
+   buffer = "HELO,FROM_GROUP_23";
+   nwrite = send(serverSocket, buffer, strlen(buffer),0);
+
+   if(nwrite  == -1)
+   {
+	   perror("send() to server failed: ");
+   }
+   
+   clients[serverSocket] = new Client(serverSocket);
+   servers[serverSocket] = new Server(serverSocket);
+   
+   memset(in_buffer, 0, sizeof(in_buffer));
+   nread = read(serverSocket, in_buffer, sizeof(in_buffer));
+   
+   if(nread > 0)
+   {
+	  printf("%s\n", in_buffer);
+   }
+}
+
+void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, 
+                  const char *buffer) 
+{
+	u_int16_t len = (u_int8_t)buffer[2] << 8;   // þarf að vera buffer[1 og 2]
+	len += (u_int8_t)buffer[1];
+	if (buffer[3] != (char)(0x002)) return;
+	if (len > 5000) return;
+	for (int i = 4; i < len; i++){
+		std::cout << "Byte nr " << i << ": " << buffer[i] << std::endl;
+	}
+}
+
 // Process command from client on the server
 
 void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds, 
@@ -161,8 +268,16 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   while(stream >> token)
       tokens.push_back(token);
 
-  if((tokens[0].compare("CONNECT") == 0) && (tokens.size() == 2))
+  if ((tokens.size() == 1) && (tokens[0][0] == (char)(0x001))){
+	  if (tokens[0].size() < 5) return;
+	  servers[clientSocket] = new Server(clientSocket);
+	  serverCommand(clientSocket, openSockets, maxfds, tokens[0].c_str());
+	  return;
+  }
+  
+  if((tokens[0].compare("CONNECT") == 0) && (tokens.size() == 3))
   {
+	 connectServer(tokens[1].c_str(), tokens[2].c_str());
      clients[clientSocket]->name = tokens[1];
   }
   else if(tokens[0].compare("LEAVE") == 0)
@@ -222,6 +337,7 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   {
       std::cout << "Unknown command from client:" << buffer << std::endl;
   }
+  std::cout << "number of tokens: " << tokens.size() << std::endl;
      
 }
 
@@ -321,7 +437,6 @@ int main(int argc, char* argv[])
                       // only triggers if there is something on the socket for us.
                       else
                       {
-                          std::cout << buffer << std::endl;
                           clientCommand(client->sock, &openSockets, &maxfds, buffer);
                       }
                   }
