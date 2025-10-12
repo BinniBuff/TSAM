@@ -1,0 +1,10 @@
+Server þarf:
+- leita eftir connection við instructor servera (gegnum client command?)
+- senda Helo við tengingu
+- leitast eftir connection við serverum sem instructor server er tengdur við (forgangur er nemenda serverar) og jafnvel að nota dfs til að bæta við okkur tengingum
+- taka við commands í réttu formatti frá serverum en cutta ef það eru 5000
+- logga allt
+- nota keepalive reglulega til að láta vita hvað mörg message hann vill senda á næsta
+- sækja message fyrir ákveðinn hóp (hvernig vitum við hvaða hóp? alltaf að sækja okkur ef mögulegt og jafnvel að nota fyrst statusreq, og ef einhver hópur sem er beintengdur okkur er með skilaboð hjá öðrum server að biðja um þau. líka ef einhver er búinn að biðja okkur um msg frá hóp og við erum ekki með þau að senda út statusreq á alla aðra servera og ef einhver þeirra er með fyrir hópinn sem er verið að biðja um þá biðjum við um þau og sendum þau áfram)
+- statusreq biðja alla um fjölda skilaboða fyrir hvern hóp (nota fyrir getmsgs)
+- statusresp svara statusreq
