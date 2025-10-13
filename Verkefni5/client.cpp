@@ -51,11 +51,8 @@ void listenServer(int serverSocket)
        else if(nread > 0)
        {
           time(&timestamp);
-          std::cout << ctime(&timestamp) << ": ";
-          printf("%s\n", buffer);
-          std::cout << std::endl;
+          std::cout << "SERVER:\n" << ctime(&timestamp) << buffer << std::endl;
        }
-       printf("here\n");
     }
 }
 
@@ -140,6 +137,8 @@ int main(int argc, char* argv[])
            perror("send() to server failed: ");
            finished = true;
        }
-
+       
+       time(&timestamp);
+  	   std::cout << "CLIENT:\n" << ctime(&timestamp) << buffer << std::endl;
    }
 }
