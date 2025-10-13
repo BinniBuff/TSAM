@@ -7,6 +7,8 @@
 - [DESCRIPTION of USAGE](#compiling)
 - [DESCRIPTION of USAGE](#machine-code)
 - [DESCRIPTION of WIRESHARK FILE](#trace)
+- [EXPECTED POINTS](#expectation)
+- [EXPECTED POINTS](#work-in-process)
 
 
 
@@ -130,6 +132,22 @@ In the folder you can see there is a file called client-server-trace.pcapng, the
     In the output you can view the header payload when testers ran the commands. 
     If you right cick any packet and click (follow TCP stream), 
     you can see the comunication in plane text from console point of view.
+
+
+
+
+# EXPECTED POINTS:
+
+## EXPECTATION:
+    - We expect to get 40 points for implementing the client and server communicaiton, that is requiremnet, (A5.pdf, 1a).
+    - We expect to get 10 points for the WIRESHARK trace, showing the communication between server and client, (A5.pdf, 1b).
+    - We expect to get 10 bonus points for submiting 1a and 1b early, (A5.pdf, 2a).
+
+## WORK IN PROCESS:
+    - We are working on setting up a home public server for extra 20 points (A5.pdf, External bot 2f). We have set up the computer and booted a new OS (Linux Ubuntu).
+    - What we have left is to set up the DMZ which will be started on tonight 3.10.2025.
+    - Then we will set up tunnels for all members to be able to work on the server externaly.
+    - Later on we will find more bonus points to complete.
 
 
 
