@@ -266,9 +266,9 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
 	
   if (buffer[0] == 0x001){
 	  std::cout << "tokens got into servermessage" << std::endl;
-	  if (tokens[0].size() < 5) return;
+	  if (sizeof(buffer) < 5) return;
 	  servers[clientSocket] = new Server(clientSocket);
-	  serverCommand(clientSocket, openSockets, maxfds, tokens[0].c_str());
+	  serverCommand(clientSocket, openSockets, maxfds, buffer);
 	  return;
   }
   std::string line(buffer);
@@ -410,7 +410,7 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   std::cout << "number of tokens: " << tokens.size() << std::endl;
      
 }
-
+}
 int main(int argc, char* argv[])
 {
     bool finished;
