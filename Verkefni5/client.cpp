@@ -33,7 +33,7 @@
 void listenServer(int serverSocket)
 {
     int nread;                                  // Bytes read from socket
-    char buffer[1025];                          // Buffer for reading input
+    char buffer[5000];                          // Buffer for reading input
 
     while(true)
     {
@@ -59,7 +59,7 @@ int main(int argc, char* argv[])
    struct sockaddr_in serv_addr;           // Socket address for server
    int serverSocket;                         // Socket used for server 
    int nwrite;                               // No. bytes written to server
-   char buffer[1025];                        // buffer for writing to server
+   char buffer[5000];                        // buffer for writing to server
    bool finished;                   
    int set = 1;                              // Toggle for setsockopt
 
