@@ -27,6 +27,9 @@
 #include <sstream>
 #include <thread>
 #include <map>
+#include <ctime>
+
+time_t timestamp;
 
 // Threaded function for handling responss from server
 
@@ -47,7 +50,10 @@ void listenServer(int serverSocket)
        }
        else if(nread > 0)
        {
+          time(&timestamp);
+          std::cout << ctime(&timestamp) << ": ";
           printf("%s\n", buffer);
+          std::cout << std::endl;
        }
        printf("here\n");
     }
