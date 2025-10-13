@@ -247,6 +247,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 {
 	u_int16_t len = (u_int8_t)buffer[2] << 8;   // þarf að vera buffer[1 og 2]
 	len += (u_int8_t)buffer[1];
+	len = noths(len);
 	if (buffer[3] != (char)(0x002)) return;
 	if (len > 5000) return;
 	for (int i = 4; i < len; i++){
@@ -269,6 +270,7 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
       tokens.push_back(token);
 
   if ((tokens.size() == 1) && (tokens[0][0] == (char)(0x001))){
+	  std::cout << "tokens got into servermessage" << std::endl;
 	  if (tokens[0].size() < 5) return;
 	  servers[clientSocket] = new Server(clientSocket);
 	  serverCommand(clientSocket, openSockets, maxfds, tokens[0].c_str());
