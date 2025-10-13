@@ -6,13 +6,15 @@
 - [DESCRIPTION of CHANGES](#changes)
 - [DESCRIPTION of USAGE](#compiling)
 - [DESCRIPTION of USAGE](#machine-code)
+- [DESCRIPTION of WIRESHARK FILE](#trace)
 
 
 
 
 
 # DESCRIPTION of CHANGES:
-We got the foundation of our code from examples.tar, and have implemented changes to the server file. Below you can read the following changes.
+We got the foundation of our code from examples.tar, and have implemented changes to the server file.
+Below you can read the following changes.
 
 - ## CHANGES:
 
@@ -114,6 +116,20 @@ Under usage you will see how you compile the files and how to use the machine co
         LEAVE
 
         Over and Out
+
+
+
+
+# WIRESHARK
+
+## DESCRIPTIION of WIRESHARK FILE:
+In the folder you can see there is a file called client-server-trace.pcapng, there is the ouput of the trace while we did the example of communication between the server and client. To open the file you must set up WIRESHARK on your own computer. Enter the following url in your internet browser and follow the installation process ( https://github.com/wireshark/wireshark ). Once it is done, come back and open the file, client-server-trace.pcapng 
+
+- ## TRACE:
+    In the file you can see the communication from the clients point of view. 
+    In the output you can view the header payload when testers ran the commands. 
+    If you right cick any packet and click (follow TCP stream), 
+    you can see the comunication in plane text from console point of view.
 
 
 
