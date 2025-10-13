@@ -5,10 +5,9 @@
 ## Table of content
 - [DESCRIPTION of CHANGES](#changes)
 - [DESCRIPTION of USAGE](#compiling)
-- [DESCRIPTION of USAGE](#machine-code)
 - [DESCRIPTION of WIRESHARK FILE](#trace)
 - [EXPECTED POINTS](#expectation)
-- [EXPECTED POINTS](#work-in-process)
+
 
 
 
