@@ -21,7 +21,7 @@
 #include <map>
 #include <vector>
 #include <list>
-
+#include <cstring>
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -222,7 +222,7 @@ void connectServer(const char *IP, const char *port)
    }
    
    memset(buffer, 0, sizeof(buffer));
-   buffer = "HELO,FROM_GROUP_23";
+   strcpy(buffer, "HELO,FROM_GROUP_23"); // líka hægt að ger char* fyrir message og assign'a það í send message.c_str() og message.size() 
    nwrite = send(serverSocket, buffer, strlen(buffer),0);
 
    if(nwrite  == -1)
