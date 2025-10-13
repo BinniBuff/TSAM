@@ -247,7 +247,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 {
 	u_int16_t len = (u_int8_t)buffer[2] << 8;   // þarf að vera buffer[1 og 2]
 	len += (u_int8_t)buffer[1];
-	len = noths(len);
+	len = ntohs(len);
 	if (buffer[3] != (char)(0x002)) return;
 	if (len > 5000) return;
 	for (int i = 4; i < len; i++){
