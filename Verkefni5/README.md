@@ -8,6 +8,9 @@
 - [DESCRIPTION of USAGE](#machine-code)
 
 
+
+
+
 # DESCRIPTION of CHANGES:
 We got the foundation of our code from examples.tar, and have implemented changes to the server file. Below you can read the following changes.
 
@@ -19,7 +22,6 @@ We got the foundation of our code from examples.tar, and have implemented change
         - SENDMSG: Send message lets the server deliver a message to a chosen group id. 
         - GETMSG: Get a single message from the server to your group.
         - LISTSERVERS: Lets you list all the servers you are connected to. 
-
 
     2. CLIENT: You get full date after sending messages, changed size for buffer from 1024B to 5000B.
 
@@ -50,21 +52,19 @@ Under usage you will see how you compile the files and how to use the machine co
     Client connected on server: 4
     
     Example of usage:
-        ./tsamgroupid23 <portNr>
-        Listening on port: <portNr>
-        accept***
-        Client connected on server: 4
-        number of tokens: 2
-        Command: GETMSG
-        Command: SENDMSG
-        Group ID: 23
-        Message: 'HELLO I AM EXAMPLE MESSAGE'
-        Command: GETMSG
-        Command: LISTSERVERS
-        number of tokens: 2
-        Command: LISTSERVERS
-        Client closed connection: 4
-        number of tokens: 1
+    ./tsamgroup23 4023
+    Listening on port: 4023
+    accept***
+    Client connected on server: 4
+    Client closed connection: 4
+    accept***
+    Client connected on server: 4
+    Command: SENDMSG
+    Group ID: 23
+    Message: 'A test message for testing'
+    Command: GETMSG
+    Command: LISTSERVERS
+    Client closed connection: 4
 
         
 
@@ -75,33 +75,49 @@ Under usage you will see how you compile the files and how to use the machine co
     (The successfull output will look like this.)
     Over and out 
     Eample of command usage:
-        ./client <ipNr> <portNr>
+        ./client <redacted> 4023
         NAME 23
-        GETMSG  
-        No new messages.
+        CLIENT:
+        Mon Oct 13 13:41:34 2025
+        NAME 23
 
-        here
-        SENDMSG,23,HELLO I AM EXAMPLE MESSAGE
+        SENDMSG,23,A test message for testing
+        CLIENT:
+        Mon Oct 13 13:42:03 2025
+        SENDMSG,23,A test message for testing
+
+        SERVER:
+        Mon Oct 13 13:42:03 2025
         Message for 23 has been queued.
 
-        here
         GETMSG
-        HELLO I AM EXAMPLE MESSAGE
-        here
+        CLIENT:
+        Mon Oct 13 13:42:11 2025
+        GETMSG
+
+        SERVER:
+        Mon Oct 13 13:42:11 2025
+        A test message for testing
         LISTSERVERS
+        CLIENT:
+        Mon Oct 13 13:42:19 2025
+        LISTSERVERS
+
+        SERVER:
+        Mon Oct 13 13:42:19 2025
         Connected clients:
         - Group: 23 (Socket: 4)
 
-        here
-        NAME 0
-        LISTSERVERS
-        Connected clients:
-        - Group: 0 (Socket: 4)
-
-        here
         LEAVE
+        CLIENT:
+        Mon Oct 13 13:53:07 2025
+        LEAVE
+
         Over and Out
-        
+
+
+
+                
 
 
 
