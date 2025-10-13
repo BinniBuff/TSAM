@@ -38,6 +38,9 @@
 
 #define BACKLOG  5          // Allowed length of queue of waiting connections
 
+// A global message box, to store messages  for groups
+std::map<std::string, std::list<std::string>> messageQueues;
+
 // Simple class for handling connections from clients.
 //
 // Client(int socket) - socket to send/receive traffic from client.
@@ -260,6 +263,104 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds, 
                   char *buffer) 
 {
+	
+  if (buffer[0] == 0x001){
+	  std::cout << "tokens got into servermessage" << std::endl;
+	  if (tokens[0].size() < 5) return;
+	  servers[clientSocket] = new Server(clientSocket);
+	  serverCommand(clientSocket, openSockets, maxfds, tokens[0].c_str());
+	  return;
+  }
+  std::string line(buffer);
+  
+    size_t end = line.find_last_not_of(" \n\r\t");
+
+    if (end != std::string::npos)
+    {
+        line = line.substr(0, end + 1);
+    }
+
+    // Commands (PLEASE use this method if white-space is a factor like in "SENDMSG,GROUP ID,<message contents>")
+    if (line.rfind("SENDMSG,", 0) == 0) 
+    {
+        // Find the position of the first and second commas
+        size_t first_comma = line.find(',');
+        size_t second_comma = line.find(',', first_comma + 1);
+
+        // Ensure both commas were found
+        if (second_comma != std::string::npos) 
+        {
+            // Extract the group id, between the first and second comma
+            std::string groupID = line.substr(first_comma + 1, second_comma - (first_comma + 1));
+
+            // Extract the message, everything after the second comma
+            std::string msg = line.substr(second_comma + 1);
+
+            std::cout << "Command: SENDMSG" << std::endl;
+            std::cout << "Group ID: " << groupID << std::endl;
+            std::cout << "Message: '" << msg << "'" << std::endl;
+
+            // Message for group X sent in their respective message box
+            messageQueues[groupID].push_back(msg);
+
+            // Send an acknowledgment back
+            std::string ack = "Message for " + groupID + " has been queued.\n";
+            send(clientSocket, ack.c_str(), ack.length(), 0);
+        }
+    }
+        // Check for GETMSG command
+        else if (line == "GETMSG") 
+        {
+            std::cout << "Command: GETMSG" << std::endl;
+
+            // Get the group ID of the client asking for a message
+            // (Assumes the client has used "CONNECT <groupID>" beforehand)
+            std::string clientGroupID = clients[clientSocket]->name;
+            // Check if group has any mail in their message box
+            if (!clientGroupID.empty() && messageQueues.count(clientGroupID) && !messageQueues[clientGroupID].empty())
+            {
+                // Get the oldest message from the front of the queue
+                std::string message_to_send = messageQueues[clientGroupID].front();
+                
+                // Send it to the client.
+                send(clientSocket, message_to_send.c_str(), message_to_send.length(), 0);
+
+                // Remove the message from the queue since it's been delivered
+                messageQueues[clientGroupID].pop_front();
+            }
+            else
+            {
+                // If there are no messages, tell the client
+                const char* no_msg = "No new messages.\n";
+                send(clientSocket, no_msg, strlen(no_msg), 0);
+            }
+        }
+        // Check for LISTSERVERS command
+        // TODO: Update to list other servers, not clients
+        // The server is not connected  to other servers as is
+        else if (line == "LISTSERVERS") 
+        {
+            std::cout << "Command: LISTSERVERS" << std::endl;
+
+            std::string client_list_msg = "Connected clients:\n";
+            if (clients.empty())
+            {
+                client_list_msg = "No clients connected.\n";
+            }
+            else
+            {
+                for (auto const& pair : clients)
+                {
+                    Client* client = pair.second;
+                    // Assuming client->name stores the group id from a "CONNECT" command
+                    // Might want to remove the socket part, but it will stay for now
+                    client_list_msg += "  - Group: " + client->name + " (Socket: " + std::to_string(client->sock) + ")\n";
+                }
+            }
+            send(clientSocket, client_list_msg.c_str(), client_list_msg.length(), 0);
+        }
+        else 
+        {
   std::vector<std::string> tokens;
   std::string token;
 
@@ -268,19 +369,10 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
 
   while(stream >> token)
       tokens.push_back(token);
-
-  if ((tokens.size() == 1) && (tokens[0][0] == (char)(0x001))){
-	  std::cout << "tokens got into servermessage" << std::endl;
-	  if (tokens[0].size() < 5) return;
-	  servers[clientSocket] = new Server(clientSocket);
-	  serverCommand(clientSocket, openSockets, maxfds, tokens[0].c_str());
-	  return;
-  }
   
   if((tokens[0].compare("CONNECT") == 0) && (tokens.size() == 3))
   {
 	 connectServer(tokens[1].c_str(), tokens[2].c_str());
-     clients[clientSocket]->name = tokens[1];
   }
   else if(tokens[0].compare("LEAVE") == 0)
   {
@@ -307,33 +399,9 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   }
   // This is slightly fragile, since it's relying on the order
   // of evaluation of the if statement.
-  else if((tokens[0].compare("MSG") == 0) && (tokens[1].compare("ALL") == 0))
+  else if(tokens[0].compare("NAME") == 0)
   {
-      std::string msg;
-      for(auto i = tokens.begin()+2;i != tokens.end();i++) 
-      {
-          msg += *i + " ";
-      }
-
-      for(auto const& pair : clients)
-      {
-          send(pair.second->sock, msg.c_str(), msg.length(),0);
-      }
-  }
-  else if(tokens[0].compare("MSG") == 0)
-  {
-      for(auto const& pair : clients)
-      {
-          if(pair.second->name.compare(tokens[1]) == 0)
-          {
-              std::string msg;
-              for(auto i = tokens.begin()+2;i != tokens.end();i++) 
-              {
-                  msg += *i + " ";
-              }
-              send(pair.second->sock, msg.c_str(), msg.length(),0);
-          }
-      }
+      clients[clientSocket]->name = tokens[1];
   }
   else
   {

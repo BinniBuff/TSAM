@@ -124,16 +124,8 @@ int main(int argc, char* argv[])
    while(!finished)
    {
        bzero(buffer, sizeof(buffer));
-       
-       u_int8_t soh = 0x001;
 
        fgets(buffer, sizeof(buffer), stdin);
-       
-       buffer[0] = soh;
-       
-       if (buffer[0] != 0x001){
-		   std::cout << "not sending header" << std::endl;
-	   }
 
        nwrite = send(serverSocket, buffer, strlen(buffer),0);
 
