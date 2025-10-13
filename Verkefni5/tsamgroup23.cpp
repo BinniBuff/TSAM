@@ -27,6 +27,7 @@
 #include <thread>
 #include <map>
 #include <charconv>
+#include <sstream>
 
 #include <unistd.h>
 
@@ -166,7 +167,7 @@ void closeClient(int clientSocket, fd_set *openSockets, int *maxfds)
 
 }
 
-void connectServer(const char *IP, const char *port)
+void connectServer(const char *IP, const char *port, const char *name)
 {
    struct addrinfo hints, *svr;              // Network host entry for server
    struct sockaddr_in serv_addr;           // Socket address for server
@@ -233,15 +234,41 @@ void connectServer(const char *IP, const char *port)
 	   perror("send() to server failed: ");
    }
    
-   clients[serverSocket] = new Client(serverSocket);
-   servers[serverSocket] = new Server(serverSocket);
-   
    memset(in_buffer, 0, sizeof(in_buffer));
    nread = read(serverSocket, in_buffer, sizeof(in_buffer));
    
    if(nread > 0)
    {
 	  printf("%s\n", in_buffer);
+   }
+   // parse the message, see if it is SERVERS,GROUP_NAME,IP,PORT
+   std::string message = (std::string)(in_buffer + 4);
+   std::string tmp;
+   std::vector<std::string> parts;
+   
+   std::stringstream ss(message);
+   
+   while (std::getline(ss, tmp, ',')){
+	   parts.push_back(tmp);
+   }
+   
+   if (parts[0] != "SERVERS"){
+	   return;
+   }
+   
+   clients[serverSocket] = new Client(serverSocket);
+   servers[serverSocket] = new Server(serverSocket);
+   clients[serverSocket]->name = name;
+   servers[serverSocket]->name = name;
+   
+   for (int i = 1; i < parts.size(); i += 3){
+	   if (servers.size() >= 7){
+		   return;
+	   }
+	   std::string new_name = parts[i];
+	   std::string new_IP = parts[i+1];
+	   std::string new_port = parts[i+2];
+	   connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
    }
 }
 
@@ -263,11 +290,11 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds, 
                   char *buffer) 
 {
-	
+  // If the first byte is SOH then the client is a server
   if (buffer[0] == 0x001){
 	  std::cout << "tokens got into servermessage" << std::endl;
 	  if (sizeof(buffer) < 5) return;
-	  servers[clientSocket] = new Server(clientSocket);
+	  if (!servers[clientSocket]) servers[clientSocket] = new Server(clientSocket);
 	  serverCommand(clientSocket, openSockets, maxfds, buffer);
 	  return;
   }
@@ -370,9 +397,10 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   while(stream >> token)
       tokens.push_back(token);
   
-  if((tokens[0].compare("CONNECT") == 0) && (tokens.size() == 3))
+  // Connect to server using IP, port and name
+  if((tokens[0].compare("CONNECT") == 0) && (tokens.size() == 4))
   {
-	 connectServer(tokens[1].c_str(), tokens[2].c_str());
+	 connectServer(tokens[1].c_str(), tokens[2].c_str(), tokens[3].c_str());
   }
   else if(tokens[0].compare("LEAVE") == 0)
   {
@@ -407,7 +435,6 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   {
       std::cout << "Unknown command from client:" << buffer << std::endl;
   }
-  std::cout << "number of tokens: " << tokens.size() << std::endl;
      
 }
 }

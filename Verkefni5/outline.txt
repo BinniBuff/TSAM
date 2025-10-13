@@ -1,6 +1,6 @@
 Server þarf:
-- leita eftir connection við instructor servera (gegnum client command?)
-- senda Helo við tengingu
+- leita eftir connection við instructor servera (gegnum client command?) x
+- senda Helo við tengingu x
 - leitast eftir connection við serverum sem instructor server er tengdur við (forgangur er nemenda serverar) og jafnvel að nota dfs til að bæta við okkur tengingum
 - taka við commands í réttu formatti frá serverum en cutta ef það eru 5000
 - logga allt
@@ -10,3 +10,8 @@ Server þarf:
 - statusresp svara statusreq
 
 Þurfum að halda utan um messages og hvaða servera þeir eiga að fara á
+
+Búa til logger fall
+Búa til fall sem sendir á serverana sem við erum tengd og tékkar á messages með statusreq og sækir msg ef við erum beintengdir einhverjum sem hann er að senda á
+búa til keepalive fall
+
