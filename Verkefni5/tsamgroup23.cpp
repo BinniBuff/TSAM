@@ -46,9 +46,6 @@
 
 #define BACKLOG  5          // Allowed length of queue of waiting connections
 
-// A global message box, to store messages  for groups
-std::map<std::string, std::list<std::string>> messageQueues;
-
 // Simple class for handling connections from clients.
 //
 // Client(int socket) - socket to send/receive traffic from client.
@@ -82,6 +79,18 @@ class Server
     ~Server(){}            // Virtual destructor defined for base class
 };
 
+// Message class
+class Message
+{
+  public:
+    std::string from;           // Name of the sender of message
+    std::string body;
+    Message(const std::string& sender, const std::string& message_body)
+        : from(sender), body(message_body) {}
+
+    ~Message(){}            // Virtual destructor defined for base class
+};
+
 // Note: map is not necessarily the most efficient method to use here,
 // especially for a server with large numbers of simulataneous connections,
 // where performance is also expected to be an issue.
@@ -92,6 +101,8 @@ class Server
 std::map<int, Client*> clients; // Lookup table for per Client information
 std::map<std::string, Server*> servers; // Lookup table for servers information
 std::map<int, Client*> instructors; // Lookup table for instructor servers information, makes it easier to throw out instructors when room is needed for new connections
+// A global message box, to store messages  for groups
+std::map<std::string, std::list<Message>> messageQueues;
 
 // Open socket for specified port.
 //
@@ -378,9 +389,9 @@ void sendMsg(int serverSocket, const char *to_name){
 	message_to_send += serverGroupID + ",";
 	
 	// FROM_GROUP_ID and Message content
-	Message *message = messageQueues[serverGroupID].front();
-	std::string from_group = message->from;
-	std::string body = message->body;
+	Message message = messageQueues[serverGroupID].front();
+	std::string from_group = message.from;
+	std::string body = message.body;
 	message_to_send += from_group + ",";
 	message_to_send += body;
 	
@@ -575,21 +586,26 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
         // Ensure both commas were found
         if (second_comma != std::string::npos) 
         {
+            // Get sender group id (assumes the NAME command used groups id)
+            std::string senderGroupID = clients[clientSocket]->name;
+
             // Extract the group id, between the first and second comma
-            std::string groupID = line.substr(first_comma + 1, second_comma - (first_comma + 1));
+            std::string resieverGroupID = line.substr(first_comma + 1, second_comma - (first_comma + 1));
 
             // Extract the message, everything after the second comma
-            std::string msg = line.substr(second_comma + 1);
+            std::string msg_body = line.substr(second_comma + 1);
 
-            std::cout << "Command: SENDMSG" << std::endl;
-            std::cout << "Group ID: " << groupID << std::endl;
-            std::cout << "Message: '" << msg << "'" << std::endl;
+            // Create a new Message object
+            Message newMessage(senderGroupID, msg_body);
 
-            // Message for group X sent in their respective message box
-            messageQueues[groupID].push_back(msg);
+            // Add the message to the recievers message queue
+            messageQueues[resieverGroupID].push_back(newMessage);
+
+            // Log the event
+            log_lister(clientSocket, "Queued message from " + senderGroupID + " to " + resieverGroupID);
 
             // Send an acknowledgment back
-            std::string ack = "Message for " + groupID + " has been queued.\n";
+            std::string ack = "Message for " + resieverGroupID + " has been queued.\n";
             send(clientSocket, ack.c_str(), ack.length(), 0);
         }
     }
@@ -605,13 +621,19 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
             if (!clientGroupID.empty() && messageQueues.count(clientGroupID) && !messageQueues[clientGroupID].empty())
             {
                 // Get the oldest message from the front of the queue
-                std::string message_to_send = messageQueues[clientGroupID].front();
+                Message oldestMessage = messageQueues[clientGroupID].front();
+
+                // Format message
+                std::string formatted_message = "FROM " + oldestMessage.from + ": " + oldestMessage.body + "\n";
                 
                 // Send it to the client.
-                send(clientSocket, message_to_send.c_str(), message_to_send.length(), 0);
+                send(clientSocket, formatted_message.c_str(), formatted_message.length(), 0);
 
                 // Remove the message from the queue since it's been delivered
                 messageQueues[clientGroupID].pop_front();
+
+                // Log event
+                log_lister(clientSocket, "Delivered message from " + oldestMessage.from);
             }
             else
             {
@@ -702,10 +724,15 @@ void keepAlive()
 {
     for (auto const& pair : servers)
     {
-        std::string sock = pair.first;         // The key is the socket number... Fixed, changed from int to const std::string because pair.first is a string... std::map<std::string, Server*> servers;
+        std::string serverName = pair.first;    // Server name
         Server* server = pair.second;  // The value is the pointer to the Server object
 
-        int message_count = messageQueues[server->name].size();
+        // The number of messages for the server
+        int message_count = 0;
+        if (messageQueues.count(serverName)) {
+            message_count = messageQueues[serverName].size();
+        }
+
         std::string command_str = "KEEPALIVE," + std::to_string(message_count);
 
         uint16_t total_length = 5 + command_str.length();   // Calculate the lenght
@@ -722,7 +749,7 @@ void keepAlive()
         // Send packet
         send(server->sock, packet, total_length, 0);
 
-        std::cout << "Sending KEEPALIVE to " << server->name << " on socket " << sock << std::endl;
+        std::cout << "Sending KEEPALIVE to " << server->name << " on socket " << server->sock << std::endl;
 }
 }
 
