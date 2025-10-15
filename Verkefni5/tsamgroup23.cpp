@@ -25,10 +25,12 @@
 #include <iostream>
 #include <sstream>
 #include <thread>
-#include <map>
+// #include <map>
 #include <charconv>
+// #include <sstream>
+#include <ctime>
 
-#include <unistd.h>
+// #include <unistd.h>
 
 // fyrir logger
 #include <fstream>
@@ -55,8 +57,11 @@ class Client
   public:
     int sock;              // socket of client connection
     std::string name;           // Limit length of name of client's user
+    char client_buffer[5000];           // Buffer for clients if stream sends more than one message
 
-    Client(int socket) : sock(socket){} 
+    Client(int socket) : sock(socket){
+		memset(client_buffer, 0, 5000);
+	} 
 
     ~Client(){}            // Virtual destructor defined for base class
 };
@@ -69,6 +74,8 @@ class Server
   public:
     int sock;              // socket of server connection
     std::string name;           // Limit length of name of server's user
+    std::string IP;			// IP of server
+    std::string port;		// port of server
 
     Server(int socket) : sock(socket){} 
 
@@ -83,7 +90,8 @@ class Server
 // (indexed on socket no.) sacrificing memory for speed.
 
 std::map<int, Client*> clients; // Lookup table for per Client information
-std::map<int, Server*> servers; // Lookup table for instructor servers information, makes it easier to throw out instructors when room is needed for new connections
+std::map<std::string, Server*> servers; // Lookup table for servers information
+std::map<int, Client*> instructors; // Lookup table for instructor servers information, makes it easier to throw out instructors when room is needed for new connections
 
 // Open socket for specified port.
 //
@@ -203,7 +211,7 @@ void closeClient(int clientSocket, fd_set *openSockets, int *maxfds)
 
 }
 
-void connectServer(const char *IP, const char *port)
+void connectServer(const char *IP, const char *port, const char *name)
 {
    struct addrinfo hints, *svr;              // Network host entry for server
    struct sockaddr_in serv_addr;           // Socket address for server
@@ -222,7 +230,7 @@ void connectServer(const char *IP, const char *port)
    if(getaddrinfo(IP, port, &hints, &svr) != 0)
    {
        perror("getaddrinfo failed: ");
-       exit(0);
+       return;
    }
 
    struct hostent *server;
@@ -257,7 +265,7 @@ void connectServer(const char *IP, const char *port)
        {
          printf("Failed to open socket to server: %s\n", IP);
          perror("Connect failed: ");
-         exit(0);
+         return;
        }
    }
    
@@ -270,42 +278,159 @@ void connectServer(const char *IP, const char *port)
 	   perror("send() to server failed: ");
    }
    
-   clients[serverSocket] = new Client(serverSocket);
-   servers[serverSocket] = new Server(serverSocket);
-   
    memset(in_buffer, 0, sizeof(in_buffer));
    nread = read(serverSocket, in_buffer, sizeof(in_buffer));
    
-   if(nread > 0)
+   if(nread < 0)
    {
-	  printf("%s\n", in_buffer);
+	   perror("read() from server failed: ");
+   }
+   // parse the message, see if it is SERVERS,GROUP_NAME,IP,PORT
+   std::string message = (std::string)(in_buffer + 4);
+   std::string tmp;
+   std::vector<std::string> parts;
+   
+   std::stringstream ss(message);
+   
+   while (std::getline(ss, tmp, ',')){
+	   parts.push_back(tmp);
+   }
+   
+   if (parts[0] != "SERVERS"){
+	   return;
+   }
+   
+   clients[serverSocket] = new Client(serverSocket);
+   servers[name] = new Server(serverSocket);
+   clients[serverSocket]->name = name;
+   servers[name]->name = name;
+   servers[IP]->name = IP;
+   servers[port]->name = port;
+   
+   // Do a DFS for other servers through this one
+   for (int i = 1; i < parts.size(); i += 3){
+	   if (servers.size() >= 7){
+		   return;
+	   }
+	   std::string new_name = parts[i];
+	   std::string new_IP = parts[i+1];
+	   std::string new_port = parts[i+2];
+	   if (!servers[new_name]) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
    }
 }
 
+// Process command from server to the server
+// Make sure to read all commands from the buffer if there are more than one
 void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, 
-                  const char *buffer) 
+                  const char *buffer, std::list<Client *> *disconnectedClients) 
 {
-	u_int16_t len = (u_int8_t)buffer[2] << 8;   // þarf að vera buffer[1 og 2]
-	len += (u_int8_t)buffer[1];
-	len = ntohs(len);
-	if (buffer[3] != (char)(0x002)) return;
-	if (len > 5000) return;
-	for (int i = 4; i < len; i++){
-		std::cout << "Byte nr " << i << ": " << buffer[i] << std::endl;
+	//check if buffer has more than 5 bytes
+	if (sizeof(buffer) < 5){
+	  std::cout << "Not enough bytes received" << std::endl;
+	  return;
 	}
+	
+	// Split buffer up by messages
+	std::string stream = (std::string)(buffer);
+	size_t start = stream.find(0x001);
+	std::string all_messages = (std::string)(buffer + start);
+	std::string tmp;
+	std::vector<std::string> messages;
+
+	std::stringstream ss(all_messages);
+
+	while (std::getline(ss, tmp, 0x001)){
+	   messages.push_back(tmp);
+	}
+	
+	// Use for-loop to iterate through all messages
+	for (int i = 0; i < messages.size(); i++){
+		u_int16_t len = (u_int8_t)messages[i][1] << 8;   // þarf að vera buffer[1 og 2]
+		len += (u_int8_t)messages[i][0];
+		len = ntohs(len);
+		if (messages[i][2] != 0x002){
+		  std::cout << "Missing <STX>" << std::endl;
+		  continue;
+		}
+
+		if (len > 5000){
+		  std::cout << "Message too long" << std::endl;
+		  continue;
+		}
+		
+		// If we did not receive the whole message, we need to store it and use it when we get the whole message
+		if (len > messages[i].size()){
+			clients[serverSocket]->client_buffer = messages[i].c_str();
+			return;
+		}
+		
+		if (messages[i][len - 1] != 0x003 && messages[i][messages[i].size() - 1] != 0x003){
+		  std::cout << "Missing <ETX>" << std::endl;
+		  continue;
+		}
+		
+		// Find the part that is just the command
+		size_t etx = messages[i].find(0x003);
+		std::string command = messages[i].substr(3, etx);
+		
+		// Commands
+		if (command.rfind("HELO", 0) == 0){
+			size_t comma = messages[i].find(',');
+			std::string server_name = command.substr(comma);	// Everything after the comma should be the server name
+			// only connect if there is room or instructor servers to kick out
+			if (clients.size() > 7){
+				if (instructors.size() < 1){
+					disconnectedClients->push_back(clients[serverSocket]);
+					closeClient(serverSocket, openSockets, maxfds);
+					return;
+				}
+				// kick out instructor server
+				Client *instructor = instructors.begin()->second;
+				disconnectedClients->push_back(instructor);
+				closeClient(instructor->sock, openSockets, maxfds);
+				servers.erase(instructor->name);
+				instructors.erase(instructor->sock);
+			}
+			// Add name
+			servers[server_name] = new Server(serverSocket);
+			servers[server_name]->name = server_name;
+			clients[serverSocket]->name = server_name;
+			
+			// Add server to instructor list if it is an instructor server
+			if (server_name[0] = 'I') instructors[serverSocket] = clients[serverSocket];
+			
+			// Send back SERVERS
+			std::string response = "SERVERS,";
+			for (auto const& pair : servers){
+				Server *tmp = pair.second;
+				response += tmp.name + ",";
+				response += tmp.IP + ",";
+				response += tmp.port + ",";
+				response += ";";
+			}
+			
+            send(serverSocket, response.c_str(), response.length(), 0);
+		}
+		
+	}
+
 }
 
 // Process command from client on the server
 
 void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds, 
-                  char *buffer) 
+                  char *buffer, std::list<Client *> *disconnectedClients) 
 {
-	
-  if (buffer[0] == 0x001){
+	// Make sure there is nothing left from this socket from before
+  if (clients[clientSocket]->client_buffer[0] != 0){
+	  std::string line(buffer);
+	  // see if there are leftover messages in the buffer. if so we need to finish those before addressing new ones
+  }
+  
+  // If the first byte is SOH then the client is a server
+  if (buffer[0] == 0x001 || clients[clientSocket]->name[0] == 'A' || clients[clientSocket]->name[0] == 'I'){
 	  std::cout << "tokens got into servermessage" << std::endl;
-	  if (sizeof(buffer) < 5) return;
-	  servers[clientSocket] = new Server(clientSocket);
-	  serverCommand(clientSocket, openSockets, maxfds, buffer);
+	  serverCommand(clientSocket, openSockets, maxfds, buffer, disconnectedClients);
 	  return;
   }
   std::string line(buffer);
@@ -407,9 +532,10 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   while(stream >> token)
       tokens.push_back(token);
   
-  if((tokens[0].compare("CONNECT") == 0) && (tokens.size() == 3))
+  // Connect to server using IP, port and name
+  if((tokens[0].compare("CONNECT") == 0) && (tokens.size() == 4))
   {
-	 connectServer(tokens[1].c_str(), tokens[2].c_str());
+	 connectServer(tokens[1].c_str(), tokens[2].c_str(), tokens[3].c_str());
   }
   else if(tokens[0].compare("LEAVE") == 0)
   {
@@ -448,7 +574,34 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
 }
 }
 
+// Sends other servers we are connected to the number of msg in their inbox
+void keepAlive()
+{
+    for (auto const& pair : servers)
+    {
+        int sock = pair.first;         // The key is the socket number
+        Server* server = pair.second;  // The value is the pointer to the Server object
 
+        int message_count = messageQueues[server->name].size();
+        std::string command_str = "KEEPALIVE," + std::to_string(message_count);
+
+        uint16_t total_length = 5 + command_str.length();   // Calculate the lenght
+        uint16_t network_length = htons(total_length);  // In network byte order
+
+        // Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+        char packet[total_length];
+        packet[0] = 0x01; // SOH
+        memcpy(packet + 1, &network_length, 2);
+        packet[3] = 0x02; // STX
+        memcpy(packet + 4, command_str.c_str(), command_str.length());
+        packet[total_length - 1] = 0x03; // ETX
+
+        // Send packet
+        send(server->sock, packet, total_length, 0);
+
+        std::cout << "Sending KEEPALIVE to " << server->name << " on socket " << sock << std::endl;
+}
+}
 
 
 int main(int argc, char* argv[])
@@ -462,7 +615,8 @@ int main(int argc, char* argv[])
     int maxfds;                     // Passed to select() as max fd in set
     struct sockaddr_in client;
     socklen_t clientLen;
-    char buffer[1025];              // buffer for reading from clients
+    char buffer[5000];              // buffer for reading from clients
+    time_t lastKeepAliveTime = 0;   // Timer to make sure keepAlive does not run more than once a minute
 
     if(argc != 2)
     {
@@ -497,8 +651,21 @@ int main(int argc, char* argv[])
         readSockets = exceptSockets = openSockets;
         memset(buffer, 0, sizeof(buffer));
 
+        // A timeout for select() so it does not wait forever for network activity
+        struct timeval tv;
+        tv.tv_sec = 5;  // Wait 5 seconds
+        tv.tv_usec = 0;
+
         // Look at sockets and see which ones have something to be read()
-        int n = select(maxfds + 1, &readSockets, NULL, &exceptSockets, NULL);
+        int n = select(maxfds + 1, &readSockets, NULL, &exceptSockets, &tv);
+
+        // Check if it is time to run keepAlive
+        time_t currentTime = time(NULL);
+        if(currentTime - lastKeepAliveTime >= 60)
+        {
+            keepAlive();
+            lastKeepAliveTime = currentTime;
+        }
 
         if(n < 0)
         {
@@ -530,7 +697,7 @@ int main(int argc, char* argv[])
 
             }
             // Now check for commands from clients
-            std::list<Client *> disconnectedClients;  
+            std::list<Client *> disconnectedClients;
             while(n-- > 0)
             {
                for(auto const& pair : clients)
@@ -551,14 +718,14 @@ int main(int argc, char* argv[])
                       // only triggers if there is something on the socket for us.
                       else
                       {
-                          clientCommand(client->sock, &openSockets, &maxfds, buffer);
+                          clientCommand(client->sock, &openSockets, &maxfds, buffer, &disconnectedClients);
                           log_lister(client->sock, "Recived data: " + std::string(buffer));
                       }
                   }
                }
-               // Remove client from the clients list
-               for(auto const& c : disconnectedClients)
-                  clients.erase(c->sock);
+                // Remove client from the clients list
+                for(auto const& c : disconnectedClients)
+                    clients.erase(c->sock);
             }
         }
     }
