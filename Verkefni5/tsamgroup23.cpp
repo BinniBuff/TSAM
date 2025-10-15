@@ -67,6 +67,8 @@ class Server
   public:
     int sock;              // socket of server connection
     std::string name;           // Limit length of name of server's user
+    std::string IP;			// IP of server
+    std::string port;		// port of server
 
     Server(int socket) : sock(socket){} 
 
@@ -190,7 +192,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    if(getaddrinfo(IP, port, &hints, &svr) != 0)
    {
        perror("getaddrinfo failed: ");
-       exit(0);
+       return;
    }
 
    struct hostent *server;
@@ -225,7 +227,7 @@ void connectServer(const char *IP, const char *port, const char *name)
        {
          printf("Failed to open socket to server: %s\n", IP);
          perror("Connect failed: ");
-         exit(0);
+         return;
        }
    }
    
@@ -241,9 +243,9 @@ void connectServer(const char *IP, const char *port, const char *name)
    memset(in_buffer, 0, sizeof(in_buffer));
    nread = read(serverSocket, in_buffer, sizeof(in_buffer));
    
-   if(nread > 0)
+   if(nread < 0)
    {
-	  printf("%s\n", in_buffer);
+	   perror("read() from server failed: ");
    }
    // parse the message, see if it is SERVERS,GROUP_NAME,IP,PORT
    std::string message = (std::string)(in_buffer + 4);
@@ -264,6 +266,8 @@ void connectServer(const char *IP, const char *port, const char *name)
    servers[name] = new Server(serverSocket);
    clients[serverSocket]->name = name;
    servers[name]->name = name;
+   servers[IP]->name = IP;
+   servers[port]->name = port;
    
    // Do a DFS for other servers through this one
    for (int i = 1; i < parts.size(); i += 3){
@@ -347,6 +351,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 				disconnectedClients->push_back(instructor);
 				closeClient(instructor->sock, openSockets, maxfds);
 				servers.erase(instructor->name);
+				instructors.erase(instructor->sock);
 			}
 			// Add name
 			servers[server_name] = new Server(serverSocket);
@@ -357,6 +362,16 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 			if (server_name[0] = 'I') instructors[serverSocket] = clients[serverSocket];
 			
 			// Send back SERVERS
+			std::string response = "SERVERS,";
+			for (auto const& pair : servers){
+				Server *tmp = pair.second;
+				response += tmp.name + ",";
+				response += tmp.IP + ",";
+				response += tmp.port + ",";
+				response += ";";
+			}
+			
+            send(serverSocket, response.c_str(), response.length(), 0);
 		}
 		
 	}
@@ -369,7 +384,7 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
                   char *buffer, std::list<Client *> *disconnectedClients) 
 {
 	// Make sure there is nothing left from this socket from before
-  if (clients[clientSocket]->client_buffer != null){
+  if (clients[clientSocket]->client_buffer[0] != 0){
 	  std::string line(buffer);
 	  // see if there are leftover messages in the buffer. if so we need to finish those before addressing new ones
   }
