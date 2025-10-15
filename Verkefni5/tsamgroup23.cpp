@@ -50,8 +50,11 @@ class Client
   public:
     int sock;              // socket of client connection
     std::string name;           // Limit length of name of client's user
+    char client_buffer[5000];           // Buffer for clients if stream sends more than one message
 
-    Client(int socket) : sock(socket){} 
+    Client(int socket) : sock(socket){
+		memset(client_buffer, 0, 5000);
+	} 
 
     ~Client(){}            // Virtual destructor defined for base class
 };
@@ -64,6 +67,8 @@ class Server
   public:
     int sock;              // socket of server connection
     std::string name;           // Limit length of name of server's user
+    std::string IP;			// IP of server
+    std::string port;		// port of server
 
     Server(int socket) : sock(socket){} 
 
@@ -78,7 +83,8 @@ class Server
 // (indexed on socket no.) sacrificing memory for speed.
 
 std::map<int, Client*> clients; // Lookup table for per Client information
-std::map<int, Server*> servers; // Lookup table for instructor servers information, makes it easier to throw out instructors when room is needed for new connections
+std::map<std::string, Server*> servers; // Lookup table for servers information
+std::map<int, Client*> instructors; // Lookup table for instructor servers information, makes it easier to throw out instructors when room is needed for new connections
 
 // Open socket for specified port.
 //
@@ -186,7 +192,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    if(getaddrinfo(IP, port, &hints, &svr) != 0)
    {
        perror("getaddrinfo failed: ");
-       exit(0);
+       return;
    }
 
    struct hostent *server;
@@ -221,7 +227,7 @@ void connectServer(const char *IP, const char *port, const char *name)
        {
          printf("Failed to open socket to server: %s\n", IP);
          perror("Connect failed: ");
-         exit(0);
+         return;
        }
    }
    
@@ -237,9 +243,9 @@ void connectServer(const char *IP, const char *port, const char *name)
    memset(in_buffer, 0, sizeof(in_buffer));
    nread = read(serverSocket, in_buffer, sizeof(in_buffer));
    
-   if(nread > 0)
+   if(nread < 0)
    {
-	  printf("%s\n", in_buffer);
+	   perror("read() from server failed: ");
    }
    // parse the message, see if it is SERVERS,GROUP_NAME,IP,PORT
    std::string message = (std::string)(in_buffer + 4);
@@ -257,10 +263,13 @@ void connectServer(const char *IP, const char *port, const char *name)
    }
    
    clients[serverSocket] = new Client(serverSocket);
-   servers[serverSocket] = new Server(serverSocket);
+   servers[name] = new Server(serverSocket);
    clients[serverSocket]->name = name;
-   servers[serverSocket]->name = name;
+   servers[name]->name = name;
+   servers[IP]->name = IP;
+   servers[port]->name = port;
    
+   // Do a DFS for other servers through this one
    for (int i = 1; i < parts.size(); i += 3){
 	   if (servers.size() >= 7){
 		   return;
@@ -268,34 +277,122 @@ void connectServer(const char *IP, const char *port, const char *name)
 	   std::string new_name = parts[i];
 	   std::string new_IP = parts[i+1];
 	   std::string new_port = parts[i+2];
-	   connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
+	   if (!servers[new_name]) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
    }
 }
 
+// Process command from server to the server
+// Make sure to read all commands from the buffer if there are more than one
 void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, 
-                  const char *buffer) 
+                  const char *buffer, std::list<Client *> *disconnectedClients) 
 {
-	u_int16_t len = (u_int8_t)buffer[2] << 8;   // þarf að vera buffer[1 og 2]
-	len += (u_int8_t)buffer[1];
-	len = ntohs(len);
-	if (buffer[3] != (char)(0x002)) return;
-	if (len > 5000) return;
-	for (int i = 4; i < len; i++){
-		std::cout << "Byte nr " << i << ": " << buffer[i] << std::endl;
+	//check if buffer has more than 5 bytes
+	if (sizeof(buffer) < 5){
+	  std::cout << "Not enough bytes received" << std::endl;
+	  return;
 	}
+	
+	// Split buffer up by messages
+	std::string stream = (std::string)(buffer);
+	size_t start = stream.find(0x001);
+	std::string all_messages = (std::string)(buffer + start);
+	std::string tmp;
+	std::vector<std::string> messages;
+
+	std::stringstream ss(all_messages);
+
+	while (std::getline(ss, tmp, 0x001)){
+	   messages.push_back(tmp);
+	}
+	
+	// Use for-loop to iterate through all messages
+	for (int i = 0; i < messages.size(); i++){
+		u_int16_t len = (u_int8_t)messages[i][1] << 8;   // þarf að vera buffer[1 og 2]
+		len += (u_int8_t)messages[i][0];
+		len = ntohs(len);
+		if (messages[i][2] != 0x002){
+		  std::cout << "Missing <STX>" << std::endl;
+		  continue;
+		}
+
+		if (len > 5000){
+		  std::cout << "Message too long" << std::endl;
+		  continue;
+		}
+		
+		// If we did not receive the whole message, we need to store it and use it when we get the whole message
+		if (len > messages[i].size()){
+			clients[serverSocket]->client_buffer = messages[i].c_str();
+			return;
+		}
+		
+		if (messages[i][len - 1] != 0x003 && messages[i][messages[i].size() - 1] != 0x003){
+		  std::cout << "Missing <ETX>" << std::endl;
+		  continue;
+		}
+		
+		// Find the part that is just the command
+		size_t etx = messages[i].find(0x003);
+		std::string command = messages[i].substr(3, etx);
+		
+		// Commands
+		if (command.rfind("HELO", 0) == 0){
+			size_t comma = messages[i].find(',');
+			std::string server_name = command.substr(comma);	// Everything after the comma should be the server name
+			// only connect if there is room or instructor servers to kick out
+			if (clients.size() > 7){
+				if (instructors.size() < 1){
+					disconnectedClients->push_back(clients[serverSocket]);
+					closeClient(serverSocket, openSockets, maxfds);
+					return;
+				}
+				// kick out instructor server
+				Client *instructor = instructors.begin()->second;
+				disconnectedClients->push_back(instructor);
+				closeClient(instructor->sock, openSockets, maxfds);
+				servers.erase(instructor->name);
+				instructors.erase(instructor->sock);
+			}
+			// Add name
+			servers[server_name] = new Server(serverSocket);
+			servers[server_name]->name = server_name;
+			clients[serverSocket]->name = server_name;
+			
+			// Add server to instructor list if it is an instructor server
+			if (server_name[0] = 'I') instructors[serverSocket] = clients[serverSocket];
+			
+			// Send back SERVERS
+			std::string response = "SERVERS,";
+			for (auto const& pair : servers){
+				Server *tmp = pair.second;
+				response += tmp.name + ",";
+				response += tmp.IP + ",";
+				response += tmp.port + ",";
+				response += ";";
+			}
+			
+            send(serverSocket, response.c_str(), response.length(), 0);
+		}
+		
+	}
+
 }
 
 // Process command from client on the server
 
 void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds, 
-                  char *buffer) 
+                  char *buffer, std::list<Client *> *disconnectedClients) 
 {
+	// Make sure there is nothing left from this socket from before
+  if (clients[clientSocket]->client_buffer[0] != 0){
+	  std::string line(buffer);
+	  // see if there are leftover messages in the buffer. if so we need to finish those before addressing new ones
+  }
+  
   // If the first byte is SOH then the client is a server
-  if (buffer[0] == 0x001){
+  if (buffer[0] == 0x001 || clients[clientSocket]->name[0] == 'A' || clients[clientSocket]->name[0] == 'I'){
 	  std::cout << "tokens got into servermessage" << std::endl;
-	  if (sizeof(buffer) < 5) return;
-	  if (!servers[clientSocket]) servers[clientSocket] = new Server(clientSocket);
-	  serverCommand(clientSocket, openSockets, maxfds, buffer);
+	  serverCommand(clientSocket, openSockets, maxfds, buffer, disconnectedClients);
 	  return;
   }
   std::string line(buffer);
@@ -534,7 +631,7 @@ int main(int argc, char* argv[])
                       // only triggers if there is something on the socket for us.
                       else
                       {
-                          clientCommand(client->sock, &openSockets, &maxfds, buffer);
+                          clientCommand(client->sock, &openSockets, &maxfds, buffer, &disconnectedClients);
                       }
                   }
                }
