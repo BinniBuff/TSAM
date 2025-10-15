@@ -724,11 +724,7 @@ void keepAlive()
 {
     for (auto const& pair : servers)
     {
-<<<<<<< Updated upstream
-        std::string sock = pair.first;         // The key is the socket number... Fixed, changed from int to const std::string because pair.first is a string... std::map<std::string, Server*> servers;
-=======
         std::string serverName = pair.first;    // Server name
->>>>>>> Stashed changes
         Server* server = pair.second;  // The value is the pointer to the Server object
 
         // The number of messages for the server
