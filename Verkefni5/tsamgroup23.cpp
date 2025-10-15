@@ -60,7 +60,7 @@ class Client
     char client_buffer[5000];           // Buffer for clients if stream sends more than one message
 
     Client(int socket) : sock(socket){
-		memset(client_buffer, 0, 5000);
+		memset(client_buffer, 0, sizeof(client_buffer)); // breytt úr 5000 yfir í stærð af client_buffer
 	} 
 
     ~Client(){}            // Virtual destructor defined for base class
@@ -118,7 +118,7 @@ void log_lister(int clientSocket, const std::string& message)
     std::ofstream log(filename, std::ios::app); 
     if (log.is_open())
     {
-        log << "[" << time_buffer << "]" << socket << message << std::endl;
+        log << "[" << time_buffer << "]" << socket  << message << std::endl;
     }
 
 }
@@ -420,7 +420,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 
 	std::stringstream ss(all_messages);
 
-	while (std::getline(ss, tmp, 0x001)){
+	while (std::getline(ss, tmp, '\x01')){ //DEBUG: val 3 þarf að vera char eða strengur, breytti úr hex 0x001 í 'x01' því getline tekur(strem, string, delim char)
 	   messages.push_back(tmp);
 	}
 	
@@ -441,8 +441,13 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		
 		// If we did not receive the whole message, we need to store it and use it when we get the whole message
 		if (len > messages[i].size()){
-			clients[serverSocket]->client_buffer = messages[i].c_str();
-			return;
+            // here is performed a partial copy of the message that goes through the buffer
+            // char* strncpy(char* destination, const char* source, size_t num)
+            strncpy(clients[serverSocket]->client_buffer, messages[i].c_str(), sizeof(clients[serverSocket]->client_buffer) - 1);
+
+            // ensures the null terminator is set; so what is copied is 4999 bytes with space for the null terminator so overflow does not occur
+			clients[serverSocket]->client_buffer[sizeof(clients[serverSocket]->client_buffer) - 1] = '\0';  
+            return;
 		}
 		
 		if (messages[i][len - 1] != 0x003 && messages[i][messages[i].size() - 1] != 0x003){
@@ -478,15 +483,15 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 			clients[serverSocket]->name = server_name;
 			
 			// Add server to instructor list if it is an instructor server
-			if (server_name[0] = 'I') instructors[serverSocket] = clients[serverSocket];
+			if (server_name[0] == 'I') instructors[serverSocket] = clients[serverSocket];
 			
 			// Send back SERVERS
 			std::string response = "SERVERS,";
 			for (auto const& pair : servers){
 				Server *tmp = pair.second;
-				response += tmp.name + ",";
-				response += tmp.IP + ",";
-				response += tmp.port + ",";
+				response += tmp->name + ",";
+				response += tmp->IP + ",";
+				response += tmp->port + ",";
 				response += ";";
 			}
 			
@@ -693,7 +698,7 @@ void keepAlive()
 {
     for (auto const& pair : servers)
     {
-        int sock = pair.first;         // The key is the socket number
+        std::string sock = pair.first;         // The key is the socket number... Fixed, changed from int to const std::string because pair.first is a string... std::map<std::string, Server*> servers;
         Server* server = pair.second;  // The value is the pointer to the Server object
 
         int message_count = messageQueues[server->name].size();
