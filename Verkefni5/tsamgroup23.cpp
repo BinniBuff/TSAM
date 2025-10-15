@@ -32,6 +32,12 @@
 
 // #include <unistd.h>
 
+// fyrir logger
+#include <fstream>
+#include <ctime>
+#include <string>
+
+
 // fix SOCK_NONBLOCK for OSX
 #ifndef SOCK_NONBLOCK
 #include <fcntl.h>
@@ -91,6 +97,32 @@ std::map<int, Client*> instructors; // Lookup table for instructor servers infor
 //
 // Returns -1 if unable to create the socket for any reason.
 
+// logger
+void log_lister(int clientSocket, const std::string& message)
+{
+
+    //tíma breytur fyrir name og events 
+    std::time_t now = std::time(nullptr);
+    std::tm* local = std::localtime(&now);
+
+    // format á tímastimpil fyrir filename og fyrir innihalds *.log
+    char date_buffer[32];
+    std::strftime(date_buffer, sizeof(date_buffer), "%d-%m-%y", local);
+    char time_buffer[32];
+    std::strftime(time_buffer, sizeof(time_buffer), "%d-%m-%y_%H:%M:%S", local);
+
+    // file name
+    std::string filename = "events_" + std::string(date_buffer) + ".log";
+
+    // output í *.log
+    std::ofstream log(filename, std::ios::app); 
+    if (log.is_open())
+    {
+        log << "[" << time_buffer << "]" << socket << message << std::endl;
+    }
+
+}
+
 int open_socket(int portno)
 {
    struct sockaddr_in sk_addr;   // address settings for bind()
@@ -137,11 +169,16 @@ int open_socket(int portno)
 
    if(bind(sock, (struct sockaddr *)&sk_addr, sizeof(sk_addr)) < 0)
    {
+      // added 
+      log_lister(-1, "Binding socket to port failed.");
+
       perror("Failed to bind to socket:");
       return(-1);
    }
    else
    {
+      // added
+      log_lister(-1, "Socket bound successfully to port " + std::to_string(portno));
       return(sock);
    }
 }
@@ -591,6 +628,7 @@ int main(int argc, char* argv[])
 
     listenSock = open_socket(atoi(argv[1])); 
     printf("Listening on port: %d\n", atoi(argv[1]));
+    log_lister(4, "Server started listening on port " + std::to_string(atoi(argv[1])));
 
     if(listen(listenSock, BACKLOG) < 0)
     {
@@ -655,6 +693,8 @@ int main(int argc, char* argv[])
                n--;
 
                printf("Client connected on server: %d\n", clientSock);
+               log_lister(clientSock, "Client connected to server");
+
             }
             // Now check for commands from clients
             std::list<Client *> disconnectedClients;
@@ -671,6 +711,7 @@ int main(int argc, char* argv[])
                       {
                           disconnectedClients.push_back(client);
                           closeClient(client->sock, &openSockets, &maxfds);
+                          log_lister(clientSock, "client disconnected.");
 
                       }
                       // We don't check for -1 (nothing received) because select()
@@ -678,6 +719,7 @@ int main(int argc, char* argv[])
                       else
                       {
                           clientCommand(client->sock, &openSockets, &maxfds, buffer, &disconnectedClients);
+                          log_lister(client->sock, "Recived data: " + std::string(buffer));
                       }
                   }
                }
