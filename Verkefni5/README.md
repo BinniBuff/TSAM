@@ -20,11 +20,13 @@ Below you can read the following changes.
 - ## CHANGES:
 
     1. SERVER: What was implemented was the following: Client commands under the function client_commands(). 
-    The commands created was; NAME, SENDMSG, GETMSG, LISTSERVERS.
+    The commands created was; NAME, SENDMSG, GETMSG, LISTSERVERS, CONNECT.
         - NAME: Name command is for identifying the connected dvice.
         - SENDMSG: Send message lets the server deliver a message to a chosen group id. 
         - GETMSG: Get a single message from the server to your group.
         - LISTSERVERS: Lets you list all the servers you are connected to. 
+        - CONNECT: We are still working on implementing this command, this command will be what connects us to other servers.
+        Usage CONNECT <ip> <port>.
 
     2. CLIENT: You get full date after sending messages, changed size for buffer from 1024B to 5000B.
 
