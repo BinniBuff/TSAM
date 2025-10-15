@@ -389,9 +389,9 @@ void sendMsg(int serverSocket, const char *to_name){
 	message_to_send += serverGroupID + ",";
 	
 	// FROM_GROUP_ID and Message content
-	Message *message = messageQueues[serverGroupID].front();
-	std::string from_group = message->from;
-	std::string body = message->body;
+	Message message = messageQueues[serverGroupID].front();
+	std::string from_group = message.from;
+	std::string body = message.body;
 	message_to_send += from_group + ",";
 	message_to_send += body;
 	
