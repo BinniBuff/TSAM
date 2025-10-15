@@ -25,11 +25,12 @@
 #include <iostream>
 #include <sstream>
 #include <thread>
-#include <map>
+// #include <map>
 #include <charconv>
-#include <sstream>
+// #include <sstream>
+#include <ctime>
 
-#include <unistd.h>
+// #include <unistd.h>
 
 // fix SOCK_NONBLOCK for OSX
 #ifndef SOCK_NONBLOCK
@@ -535,6 +536,37 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
      
 }
 }
+
+// Sends other servers we are connected to the number of msg in their inbox
+void keepAlive()
+{
+    for (auto const& pair : servers)
+    {
+        int sock = pair.first;         // The key is the socket number
+        Server* server = pair.second;  // The value is the pointer to the Server object
+
+        int message_count = messageQueues[server->name].size();
+        std::string command_str = "KEEPALIVE," + std::to_string(message_count);
+
+        uint16_t total_length = 5 + command_str.length();   // Calculate the lenght
+        uint16_t network_length = htons(total_length);  // In network byte order
+
+        // Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+        char packet[total_length];
+        packet[0] = 0x01; // SOH
+        memcpy(packet + 1, &network_length, 2);
+        packet[3] = 0x02; // STX
+        memcpy(packet + 4, command_str.c_str(), command_str.length());
+        packet[total_length - 1] = 0x03; // ETX
+
+        // Send packet
+        send(server->sock, packet, total_length, 0);
+
+        std::cout << "Sending KEEPALIVE to " << server->name << " on socket " << sock << std::endl;
+}
+}
+
+
 int main(int argc, char* argv[])
 {
     bool finished;
@@ -546,7 +578,8 @@ int main(int argc, char* argv[])
     int maxfds;                     // Passed to select() as max fd in set
     struct sockaddr_in client;
     socklen_t clientLen;
-    char buffer[1025];              // buffer for reading from clients
+    char buffer[5000];              // buffer for reading from clients
+    time_t lastKeepAliveTime = 0;   // Timer to make sure keepAlive does not run more than once a minute
 
     if(argc != 2)
     {
@@ -580,8 +613,21 @@ int main(int argc, char* argv[])
         readSockets = exceptSockets = openSockets;
         memset(buffer, 0, sizeof(buffer));
 
+        // A timeout for select() so it does not wait forever for network activity
+        struct timeval tv;
+        tv.tv_sec = 5;  // Wait 5 seconds
+        tv.tv_usec = 0;
+
         // Look at sockets and see which ones have something to be read()
-        int n = select(maxfds + 1, &readSockets, NULL, &exceptSockets, NULL);
+        int n = select(maxfds + 1, &readSockets, NULL, &exceptSockets, &tv);
+
+        // Check if it is time to run keepAlive
+        time_t currentTime = time(NULL);
+        if(currentTime - lastKeepAliveTime >= 60)
+        {
+            keepAlive();
+            lastKeepAliveTime = currentTime;
+        }
 
         if(n < 0)
         {
@@ -611,7 +657,7 @@ int main(int argc, char* argv[])
                printf("Client connected on server: %d\n", clientSock);
             }
             // Now check for commands from clients
-            std::list<Client *> disconnectedClients;  
+            std::list<Client *> disconnectedClients;
             while(n-- > 0)
             {
                for(auto const& pair : clients)
@@ -635,9 +681,9 @@ int main(int argc, char* argv[])
                       }
                   }
                }
-               // Remove client from the clients list
-               for(auto const& c : disconnectedClients)
-                  clients.erase(c->sock);
+                // Remove client from the clients list
+                for(auto const& c : disconnectedClients)
+                    clients.erase(c->sock);
             }
         }
     }
