@@ -129,7 +129,7 @@ void log_lister(int clientSocket, const std::string& message)
     std::ofstream log(filename, std::ios::app); 
     if (log.is_open())
     {
-        log << "[" << time_buffer << "]" << socket  << message << std::endl;
+        log << "[" << time_buffer << "]" << socket  << message << std::endl;			// hvaðan kemur socket?
     }
 
 }
@@ -330,31 +330,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    }
 }
 
-void recMsg(int serverSocket, const char *group_id){
-	char buffer[5000];
-	memset(buffer, 0, 5000);
-	// get message from socket and add to queue
-	// recv() == 0 means client has closed connection
-	size_t rec_bytes = recv(serverSocket, buffer, sizeof(buffer), MSG_DONTWAIT);
-	if(rec_bytes == 0)
-	{
-		return;
-	}
-	// We check for -1 (nothing received)
-	else if (rec_bytes < 0){
-
-        std::string name_ = std::string(group_id) + " from: " + clients[serverSocket]->name; 
-		log_lister(serverSocket, "No message for: " + name_);
-	
-    }
-	// Create message from what we received
-	else
-	{
-		
-	}
-}
-
-void getMsg(int serverSocket, const char* group_id){
+void getMsgs(int serverSocket, const char* group_id){
 	// Create a get msg
 	std::string get_message = "GETMSGS,";
 	std::string group = std::string(group_id);
@@ -376,42 +352,72 @@ void getMsg(int serverSocket, const char* group_id){
 	send(serverSocket, packet, total_length, 0);
 	
 	// Receive from server
-	recMsg(serverSocket, group_id);
+	// How many times to receive? When are we calling GETMSGS? maybe only after we call statusreq? so is then we know how many times to receive
+	// recvMsg(serverSocket, group_id); ------------ SLEPPA? ---------------------
 }
 
 // SENDMSG is used from many other functions
 void sendMsg(int serverSocket, const char *to_name){
-	// Create a send msg
-	std::string message_to_send = "SENDMSG,";
-	
-	// TO_GROUP_ID
+	// Get group ID for servers map
 	std::string serverGroupID = std::string(to_name);
-	message_to_send += serverGroupID + ",";
-	
-	// FROM_GROUP_ID and Message content
-	Message message = messageQueues[serverGroupID].front();
-	std::string from_group = message.from;
-	std::string body = message.body;
-	message_to_send += from_group + ",";
-	message_to_send += body;
-	
-	// Send packet to the server.
-	uint16_t total_length = 5 + message_to_send.length();   // Calculate the lenght
-	uint16_t network_length = htons(total_length);  // In network byte order
+	// Should sendMsg send all messages intended for group? or only one per call to it?
+	for (int i = 0; i < messageQueues[serverGroupID].size(); i++){
+		
+		// Create a send msg
+		std::string message_to_send = "SENDMSG,";
+		
+		// TO_GROUP_ID
+		message_to_send += serverGroupID + ",";
+		
+		// FROM_GROUP_ID and Message content
+		Message message = messageQueues[serverGroupID].front();
+		std::string from_group = message.from;
+		std::string body = message.body;
+		message_to_send += from_group + ",";
+		message_to_send += body;
+		
+		// Send packet to the server.
+		uint16_t total_length = 5 + message_to_send.length();   // Calculate the lenght
+		uint16_t network_length = htons(total_length);  // In network byte order
 
-	// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
-	char packet[total_length];
-	packet[0] = 0x01; // SOH
-	memcpy(packet + 1, &network_length, 2);
-	packet[3] = 0x02; // STX
-	memcpy(packet + 4, message_to_send.c_str(), message_to_send.length());
-	packet[total_length - 1] = 0x03; // ETX
+		// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+		char packet[total_length];
+		packet[0] = 0x01; // SOH
+		memcpy(packet + 1, &network_length, 2);
+		packet[3] = 0x02; // STX
+		memcpy(packet + 4, message_to_send.c_str(), message_to_send.length());
+		packet[total_length - 1] = 0x03; // ETX
 
-	// Send packet
-	send(serverSocket, packet, total_length, 0);
+		// Send packet
+		send(serverSocket, packet, total_length, 0);
 
-	// Remove the message from the queue since it's been delivered
-	messageQueues[serverGroupID].pop_front();
+		// Remove the message from the queue since it's been delivered
+		messageQueues[serverGroupID].pop_front();
+	}
+}
+
+void recvMsg(int serverSocket, const char *buffer){
+	std::string line = std::string(buffer);
+	// Find the position of the first, second and third commas
+	size_t first_comma = line.find(',');
+	size_t second_comma = line.find(',', first_comma + 1);
+	size_t third_comma = line.find(',', second_comma + 1);
+
+	// Ensure both commas were found
+	if (third_comma != std::string::npos) 
+	{
+		// Get all the necessary data from the buffer
+		std::string toGroupID = line.substr(first_comma + 1, second_comma - (first_comma + 1));
+		std::string fromGroupID = line.substr(second_comma + 1, third_comma - (second_comma + 1));
+		std::string messageBody = line.substr(third_comma +1);
+		
+		// Create the message
+		Message newMessage(fromGroupID, messageBody);
+		messageQueues[toGroupID].push_back(newMessage);
+		
+		// Viljum við senda beint ef message'ið er til einhvers sem við erum tengdir?
+		if (servers[toGroupID]) sendMsg(serverSocket, toGroupID.c_str());
+	}
 }
 
 // Process command from server to the server
@@ -426,9 +432,9 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 	}
 	
 	// Split buffer up by messages
-	std::string stream = (std::string)(buffer);
+	std::string stream = std::string(buffer);
 	size_t start = stream.find(0x001);
-	std::string all_messages = (std::string)(buffer + start);
+	std::string all_messages = std::string(buffer + start);
 	std::string tmp;
 	std::vector<std::string> messages;
 
@@ -441,7 +447,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 	// Use for-loop to iterate through all messages
 	for (int i = 0; i < messages.size(); i++){
 		u_int16_t len = (u_int8_t)messages[i][1] << 8;   // þarf að vera buffer[1 og 2]
-		len += (u_int8_t)messages[i][0];
+		len += (u_int8_t)messages[i][0];                 // BTW ég veit ekkert hvort þetta sé rétta leiðin til að taka við svona
 		len = ntohs(len);
 		if (messages[i][2] != 0x002){
 		  std::cout << "Missing <STX>" << std::endl;
@@ -476,7 +482,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		// Commands
 		if (command.rfind("HELO", 0) == 0){
 			size_t comma = command.find(',');
-			std::string server_name = command.substr(comma);	// Everything after the comma should be the server name
+			std::string server_name = command.substr(comma + 1);	// Everything after the comma should be the server name
 			// only connect if there is room or instructor servers to kick out
 			if (clients.size() > 7){
 				if (instructors.size() < 1){
@@ -527,7 +533,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		else if (command.rfind("GETMSGS", 0) == 0){
 			// Get the group ID of the server for whom the message is
 			size_t comma = command.find(',');
-			std::string server_name = command.substr(comma);
+			std::string server_name = command.substr(comma + 1);
             // Check if group has any mail in their message box
             if (!server_name.empty() && messageQueues.count(server_name) && !messageQueues[server_name].empty())
             {
@@ -537,13 +543,17 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		
 		else if (command.rfind("KEEPALIVE", 0) == 0){
 			size_t comma = command.find(',');
-			int nr_of_messages = atoi(command.substr(comma).c_str());
+			int nr_of_messages = atoi(command.substr(comma + 1).c_str());
             std::string groupId = "A5_23"; 
-			for (int i = 0; i < nr_of_messages; i++) getMsg(serverSocket, groupId.c_str());
+			getMsgs(serverSocket, groupId.c_str());
 		}
 		
 		else if (command.rfind("STATUSREQ", 0) == 0){
 			
+		}
+		
+		else if (command.rfind("SENDMSG, 0") == 0){
+			recvMsg(serverSocket, command.c_str());
 		}
 		
 	}
@@ -607,11 +617,15 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
             // Send an acknowledgment back
             std::string ack = "Message for " + resieverGroupID + " has been queued.\n";
             send(clientSocket, ack.c_str(), ack.length(), 0);
+            
+            // TODO: 
+            // If we are connected to the server we are sending to, send to them, else send to random
         }
     }
         // Check for GETMSG command
         else if (line == "GETMSG") 
         {
+			// COULD WE USE SENDMSG FUNCTION?
             std::cout << "Command: GETMSG" << std::endl;
 
             // Get the group ID of the client asking for a message
