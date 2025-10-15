@@ -319,20 +319,23 @@ void connectServer(const char *IP, const char *port, const char *name)
    }
 }
 
-void recMsg(int serverSocket, char *group_id){
+void recMsg(int serverSocket, const char *group_id){
 	char buffer[5000];
 	memset(buffer, 0, 5000);
 	// get message from socket and add to queue
 	// recv() == 0 means client has closed connection
-	size_t rec_bytes = recv(client->sock, buffer, sizeof(buffer), MSG_DONTWAIT);
+	size_t rec_bytes = recv(serverSocket, buffer, sizeof(buffer), MSG_DONTWAIT);
 	if(rec_bytes == 0)
 	{
-		return
+		return;
 	}
 	// We check for -1 (nothing received)
 	else if (rec_bytes < 0){
-		log_lister(serverSocket, "No message for: " + std::string(group_id)) + " from: " + clients[serverSocket]->name;
-	}
+
+        std::string name_ = std::string(group_id) + " from: " + clients[serverSocket]->name; 
+		log_lister(serverSocket, "No message for: " + name_);
+	
+    }
 	// Create message from what we received
 	else
 	{
@@ -340,7 +343,7 @@ void recMsg(int serverSocket, char *group_id){
 	}
 }
 
-void getMsg(int serverSocket, char *group_id){
+void getMsg(int serverSocket, const char* group_id){
 	// Create a get msg
 	std::string get_message = "GETMSGS,";
 	std::string group = std::string(group_id);
@@ -366,7 +369,7 @@ void getMsg(int serverSocket, char *group_id){
 }
 
 // SENDMSG is used from many other functions
-void sendMsg(int serverSocket, char *to_name){
+void sendMsg(int serverSocket, const char *to_name){
 	// Create a send msg
 	std::string message_to_send = "SENDMSG,";
 	
@@ -523,8 +526,9 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		
 		else if (command.rfind("KEEPALIVE", 0) == 0){
 			size_t comma = command.find(',');
-			int nr_of_messages = atoi(command.substr(comma));
-			for (int i = 0; i < nr_of_messages; i++) getMsg(serverSocket, "A5_23")
+			int nr_of_messages = atoi(command.substr(comma).c_str());
+            std::string groupId = "A5_23"; 
+			for (int i = 0; i < nr_of_messages; i++) getMsg(serverSocket, groupId.c_str());
 		}
 		
 		else if (command.rfind("STATUSREQ", 0) == 0){
