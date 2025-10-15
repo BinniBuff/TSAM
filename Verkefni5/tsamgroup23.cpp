@@ -319,6 +319,52 @@ void connectServer(const char *IP, const char *port, const char *name)
    }
 }
 
+void recMsg(int serverSocket, char *group_id){
+	char buffer[5000];
+	memset(buffer, 0, 5000);
+	// get message from socket and add to queue
+	// recv() == 0 means client has closed connection
+	size_t rec_bytes = recv(client->sock, buffer, sizeof(buffer), MSG_DONTWAIT);
+	if(rec_bytes == 0)
+	{
+		return
+	}
+	// We check for -1 (nothing received)
+	else if (rec_bytes < 0){
+		log_lister(serverSocket, "No message for: " + std::string(group_id)) + " from: " + clients[serverSocket]->name;
+	}
+	// Create message from what we received
+	else
+	{
+		
+	}
+}
+
+void getMsg(int serverSocket, char *group_id){
+	// Create a get msg
+	std::string get_message = "GETMSGS,";
+	std::string group = std::string(group_id);
+	get_message += group;
+	
+	// Send packet to the server.
+	uint16_t total_length = 5 + get_message.length();   // Calculate the lenght
+	uint16_t network_length = htons(total_length);  // In network byte order
+
+	// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+	char packet[total_length];
+	packet[0] = 0x01; // SOH
+	memcpy(packet + 1, &network_length, 2);
+	packet[3] = 0x02; // STX
+	memcpy(packet + 4, get_message.c_str(), get_message.length());
+	packet[total_length - 1] = 0x03; // ETX
+
+	// Send packet
+	send(serverSocket, packet, total_length, 0);
+	
+	// Receive from server
+	recMsg(serverSocket, group_id);
+}
+
 // SENDMSG is used from many other functions
 void sendMsg(int serverSocket, char *to_name){
 	// Create a send msg
@@ -330,13 +376,25 @@ void sendMsg(int serverSocket, char *to_name){
 	
 	// FROM_GROUP_ID and Message content
 	Message *message = messageQueues[serverGroupID].front();
-	std::string from_group = message->name;
+	std::string from_group = message->from;
 	std::string body = message->body;
 	message_to_send += from_group + ",";
 	message_to_send += body;
 	
-	// Send it to the server.
-	send(serverSocket, message_to_send.c_str(), message_to_send.length(), 0);
+	// Send packet to the server.
+	uint16_t total_length = 5 + message_to_send.length();   // Calculate the lenght
+	uint16_t network_length = htons(total_length);  // In network byte order
+
+	// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+	char packet[total_length];
+	packet[0] = 0x01; // SOH
+	memcpy(packet + 1, &network_length, 2);
+	packet[3] = 0x02; // STX
+	memcpy(packet + 4, message_to_send.c_str(), message_to_send.length());
+	packet[total_length - 1] = 0x03; // ETX
+
+	// Send packet
+	send(serverSocket, packet, total_length, 0);
 
 	// Remove the message from the queue since it's been delivered
 	messageQueues[serverGroupID].pop_front();
@@ -432,7 +490,19 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 				response += ";";
 			}
 			
-            send(serverSocket, response.c_str(), response.length(), 0);
+            uint16_t total_length = 5 + response.length();   // Calculate the lenght
+			uint16_t network_length = htons(total_length);  // In network byte order
+
+			// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+			char packet[total_length];
+			packet[0] = 0x01; // SOH
+			memcpy(packet + 1, &network_length, 2);
+			packet[3] = 0x02; // STX
+			memcpy(packet + 4, response.c_str(), response.length());
+			packet[total_length - 1] = 0x03; // ETX
+
+			// Send packet
+			send(serverSocket, packet, total_length, 0);
 		}
 		
 		else if (command.rfind("GETMSGS", 0) == 0){
@@ -440,14 +510,16 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 			size_t comma = command.find(',');
 			std::string server_name = command.substr(comma);
             // Check if group has any mail in their message box
-            if (!serverGroupID.empty() && messageQueues.count(serverGroupID) && !messageQueues[serverGroupID].empty())
+            if (!server_name.empty() && messageQueues.count(server_name) && !messageQueues[server_name].empty())
             {
                 sendMsg(serverSocket, server_name.c_str());
             }
 		}
 		
 		else if (command.rfind("KEEPALIVE", 0) == 0){
-			
+			size_t comma = command.find(',');
+			int nr_of_messages = atoi(command.substr(comma));
+			for (int i = 0; i < nr_of_messages; i++) getMsg(serverSocket, "A5_23")
 		}
 		
 		else if (command.rfind("STATUSREQ", 0) == 0){
@@ -752,6 +824,8 @@ int main(int argc, char* argv[])
                       if(recv(client->sock, buffer, sizeof(buffer), MSG_DONTWAIT) == 0)
                       {
                           disconnectedClients.push_back(client);
+                          servers.erase(client->name);
+                          if (client->name[0] == 'I') instructors.erase(client->sock);
                           closeClient(client->sock, &openSockets, &maxfds);
                           log_lister(clientSock, "client disconnected.");
 
