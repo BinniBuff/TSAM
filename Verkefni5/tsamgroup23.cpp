@@ -60,7 +60,7 @@ class Client
     char client_buffer[5000];           // Buffer for clients if stream sends more than one message
 
     Client(int socket) : sock(socket){
-		memset(client_buffer, 0, 5000);
+		memset(client_buffer, 0, sizeof(client_buffer)); // breytt úr 5000 yfir í stærð af client_buffer
 	} 
 
     ~Client(){}            // Virtual destructor defined for base class
@@ -118,7 +118,7 @@ void log_lister(int clientSocket, const std::string& message)
     std::ofstream log(filename, std::ios::app); 
     if (log.is_open())
     {
-        log << "[" << time_buffer << "]" << socket << message << std::endl;
+        log << "[" << time_buffer << "]" << socket  << message << std::endl;
     }
 
 }
@@ -319,6 +319,90 @@ void connectServer(const char *IP, const char *port, const char *name)
    }
 }
 
+void recMsg(int serverSocket, const char *group_id){
+	char buffer[5000];
+	memset(buffer, 0, 5000);
+	// get message from socket and add to queue
+	// recv() == 0 means client has closed connection
+	size_t rec_bytes = recv(serverSocket, buffer, sizeof(buffer), MSG_DONTWAIT);
+	if(rec_bytes == 0)
+	{
+		return;
+	}
+	// We check for -1 (nothing received)
+	else if (rec_bytes < 0){
+
+        std::string name_ = std::string(group_id) + " from: " + clients[serverSocket]->name; 
+		log_lister(serverSocket, "No message for: " + name_);
+	
+    }
+	// Create message from what we received
+	else
+	{
+		
+	}
+}
+
+void getMsg(int serverSocket, const char* group_id){
+	// Create a get msg
+	std::string get_message = "GETMSGS,";
+	std::string group = std::string(group_id);
+	get_message += group;
+	
+	// Send packet to the server.
+	uint16_t total_length = 5 + get_message.length();   // Calculate the lenght
+	uint16_t network_length = htons(total_length);  // In network byte order
+
+	// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+	char packet[total_length];
+	packet[0] = 0x01; // SOH
+	memcpy(packet + 1, &network_length, 2);
+	packet[3] = 0x02; // STX
+	memcpy(packet + 4, get_message.c_str(), get_message.length());
+	packet[total_length - 1] = 0x03; // ETX
+
+	// Send packet
+	send(serverSocket, packet, total_length, 0);
+	
+	// Receive from server
+	recMsg(serverSocket, group_id);
+}
+
+// SENDMSG is used from many other functions
+void sendMsg(int serverSocket, const char *to_name){
+	// Create a send msg
+	std::string message_to_send = "SENDMSG,";
+	
+	// TO_GROUP_ID
+	std::string serverGroupID = std::string(to_name);
+	message_to_send += serverGroupID + ",";
+	
+	// FROM_GROUP_ID and Message content
+	Message *message = messageQueues[serverGroupID].front();
+	std::string from_group = message->from;
+	std::string body = message->body;
+	message_to_send += from_group + ",";
+	message_to_send += body;
+	
+	// Send packet to the server.
+	uint16_t total_length = 5 + message_to_send.length();   // Calculate the lenght
+	uint16_t network_length = htons(total_length);  // In network byte order
+
+	// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+	char packet[total_length];
+	packet[0] = 0x01; // SOH
+	memcpy(packet + 1, &network_length, 2);
+	packet[3] = 0x02; // STX
+	memcpy(packet + 4, message_to_send.c_str(), message_to_send.length());
+	packet[total_length - 1] = 0x03; // ETX
+
+	// Send packet
+	send(serverSocket, packet, total_length, 0);
+
+	// Remove the message from the queue since it's been delivered
+	messageQueues[serverGroupID].pop_front();
+}
+
 // Process command from server to the server
 // Make sure to read all commands from the buffer if there are more than one
 void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, 
@@ -339,7 +423,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 
 	std::stringstream ss(all_messages);
 
-	while (std::getline(ss, tmp, 0x001)){
+	while (std::getline(ss, tmp, '\x01')){ //DEBUG: val 3 þarf að vera char eða strengur, breytti úr hex 0x001 í 'x01' því getline tekur(strem, string, delim char)
 	   messages.push_back(tmp);
 	}
 	
@@ -360,8 +444,13 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		
 		// If we did not receive the whole message, we need to store it and use it when we get the whole message
 		if (len > messages[i].size()){
-			clients[serverSocket]->client_buffer = messages[i].c_str();
-			return;
+            // here is performed a partial copy of the message that goes through the buffer
+            // char* strncpy(char* destination, const char* source, size_t num)
+            strncpy(clients[serverSocket]->client_buffer, messages[i].c_str(), sizeof(clients[serverSocket]->client_buffer) - 1);
+
+            // ensures the null terminator is set; so what is copied is 4999 bytes with space for the null terminator so overflow does not occur
+			clients[serverSocket]->client_buffer[sizeof(clients[serverSocket]->client_buffer) - 1] = '\0';  
+            return;
 		}
 		
 		if (messages[i][len - 1] != 0x003 && messages[i][messages[i].size() - 1] != 0x003){
@@ -375,7 +464,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		
 		// Commands
 		if (command.rfind("HELO", 0) == 0){
-			size_t comma = messages[i].find(',');
+			size_t comma = command.find(',');
 			std::string server_name = command.substr(comma);	// Everything after the comma should be the server name
 			// only connect if there is room or instructor servers to kick out
 			if (clients.size() > 7){
@@ -397,19 +486,53 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 			clients[serverSocket]->name = server_name;
 			
 			// Add server to instructor list if it is an instructor server
-			if (server_name[0] = 'I') instructors[serverSocket] = clients[serverSocket];
+			if (server_name[0] == 'I') instructors[serverSocket] = clients[serverSocket];
 			
 			// Send back SERVERS
 			std::string response = "SERVERS,";
 			for (auto const& pair : servers){
 				Server *tmp = pair.second;
-				response += tmp.name + ",";
-				response += tmp.IP + ",";
-				response += tmp.port + ",";
+				response += tmp->name + ",";
+				response += tmp->IP + ",";
+				response += tmp->port + ",";
 				response += ";";
 			}
 			
-            send(serverSocket, response.c_str(), response.length(), 0);
+            uint16_t total_length = 5 + response.length();   // Calculate the lenght
+			uint16_t network_length = htons(total_length);  // In network byte order
+
+			// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+			char packet[total_length];
+			packet[0] = 0x01; // SOH
+			memcpy(packet + 1, &network_length, 2);
+			packet[3] = 0x02; // STX
+			memcpy(packet + 4, response.c_str(), response.length());
+			packet[total_length - 1] = 0x03; // ETX
+
+			// Send packet
+			send(serverSocket, packet, total_length, 0);
+		}
+		
+		else if (command.rfind("GETMSGS", 0) == 0){
+			// Get the group ID of the server for whom the message is
+			size_t comma = command.find(',');
+			std::string server_name = command.substr(comma);
+            // Check if group has any mail in their message box
+            if (!server_name.empty() && messageQueues.count(server_name) && !messageQueues[server_name].empty())
+            {
+                sendMsg(serverSocket, server_name.c_str());
+            }
+		}
+		
+		else if (command.rfind("KEEPALIVE", 0) == 0){
+			size_t comma = command.find(',');
+			int nr_of_messages = atoi(command.substr(comma).c_str());
+            std::string groupId = "A5_23"; 
+			for (int i = 0; i < nr_of_messages; i++) getMsg(serverSocket, groupId.c_str());
+		}
+		
+		else if (command.rfind("STATUSREQ", 0) == 0){
+			
 		}
 		
 	}
@@ -579,7 +702,7 @@ void keepAlive()
 {
     for (auto const& pair : servers)
     {
-        int sock = pair.first;         // The key is the socket number
+        std::string sock = pair.first;         // The key is the socket number... Fixed, changed from int to const std::string because pair.first is a string... std::map<std::string, Server*> servers;
         Server* server = pair.second;  // The value is the pointer to the Server object
 
         int message_count = messageQueues[server->name].size();
@@ -710,6 +833,8 @@ int main(int argc, char* argv[])
                       if(recv(client->sock, buffer, sizeof(buffer), MSG_DONTWAIT) == 0)
                       {
                           disconnectedClients.push_back(client);
+                          servers.erase(client->name);
+                          if (client->name[0] == 'I') instructors.erase(client->sock);
                           closeClient(client->sock, &openSockets, &maxfds);
                           log_lister(clientSock, "client disconnected.");
 
