@@ -319,6 +319,29 @@ void connectServer(const char *IP, const char *port, const char *name)
    }
 }
 
+// SENDMSG is used from many other functions
+void sendMsg(int serverSocket, char *to_name){
+	// Create a send msg
+	std::string message_to_send = "SENDMSG,";
+	
+	// TO_GROUP_ID
+	std::string serverGroupID = std::string(to_name);
+	message_to_send += serverGroupID + ",";
+	
+	// FROM_GROUP_ID and Message content
+	Message *message = messageQueues[serverGroupID].front();
+	std::string from_group = message->name;
+	std::string body = message->body;
+	message_to_send += from_group + ",";
+	message_to_send += body;
+	
+	// Send it to the server.
+	send(serverSocket, message_to_send.c_str(), message_to_send.length(), 0);
+
+	// Remove the message from the queue since it's been delivered
+	messageQueues[serverGroupID].pop_front();
+}
+
 // Process command from server to the server
 // Make sure to read all commands from the buffer if there are more than one
 void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, 
@@ -375,7 +398,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		
 		// Commands
 		if (command.rfind("HELO", 0) == 0){
-			size_t comma = messages[i].find(',');
+			size_t comma = command.find(',');
 			std::string server_name = command.substr(comma);	// Everything after the comma should be the server name
 			// only connect if there is room or instructor servers to kick out
 			if (clients.size() > 7){
@@ -410,6 +433,25 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 			}
 			
             send(serverSocket, response.c_str(), response.length(), 0);
+		}
+		
+		else if (command.rfind("GETMSGS", 0) == 0){
+			// Get the group ID of the server for whom the message is
+			size_t comma = command.find(',');
+			std::string server_name = command.substr(comma);
+            // Check if group has any mail in their message box
+            if (!serverGroupID.empty() && messageQueues.count(serverGroupID) && !messageQueues[serverGroupID].empty())
+            {
+                sendMsg(serverSocket, server_name.c_str());
+            }
+		}
+		
+		else if (command.rfind("KEEPALIVE", 0) == 0){
+			
+		}
+		
+		else if (command.rfind("STATUSREQ", 0) == 0){
+			
 		}
 		
 	}
