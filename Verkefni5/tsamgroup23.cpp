@@ -753,6 +753,10 @@ void keepAlive()
 }
 }
 
+void outGoingStatusReq()
+{
+    // TODO
+}
 
 int main(int argc, char* argv[])
 {
