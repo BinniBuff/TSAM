@@ -129,7 +129,7 @@ void log_lister(int clientSocket, const std::string& message)
     std::ofstream log(filename, std::ios::app); 
     if (log.is_open())
     {
-        log << "[" << time_buffer << "]" << socket  << message << std::endl;			// hvaðan kemur socket?
+        log << "[" << time_buffer << "]" << clientSocket << message << std::endl;			// hvaðan kemur socket?
     }
 
 }
