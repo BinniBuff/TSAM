@@ -103,6 +103,12 @@ std::map<std::string, Server*> servers; // Lookup table for servers information
 std::map<int, Client*> instructors; // Lookup table for instructor servers information, makes it easier to throw out instructors when room is needed for new connections
 // A global message box, to store messages  for groups
 std::map<std::string, std::list<Message>> messageQueues;
+// A reference to our IP so we don't connect to it
+std::string myIP = "";
+// A cache of last 5 connected IPs
+Server *last_five[5];
+// A cache of last 3 connected instructor IPs
+Server *last_instructors[3];
 
 // Open socket for specified port.
 //
@@ -229,7 +235,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    int serverSocket;                         // Socket used for server 
    int nwrite;                               // No. bytes written to server
    int nread;                                  // Bytes read from socket
-   char buffer[1025];                        // buffer for writing to server
+   char buffer[5000];                        // buffer for writing to server
    char in_buffer[5000];                        // buffer for receiving from server
    int set = 1;                              // Toggle for setsockopt
 
@@ -263,6 +269,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    {
        printf("Failed to set SO_REUSEADDR for port %s\n", port);
        perror("setsockopt failed: ");
+       return;
    }
 
    
@@ -315,8 +322,31 @@ void connectServer(const char *IP, const char *port, const char *name)
    servers[name] = new Server(serverSocket);
    clients[serverSocket]->name = name;
    servers[name]->name = name;
-   servers[IP]->name = IP;
-   servers[port]->name = port;
+   servers[name]->IP = IP;
+   servers[name]->port = port;
+   if (std::count(std::begin(last_five), std::end(last_five), servers[name]) > 0){
+	   auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
+	   if (it == std::end(last_five)){
+	      for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
+	      last_five[4] = servers[name];
+	   }
+	   else{
+	   	   *it = servers[name];
+	   }
+   }
+   if (name[0] == 'I'){
+	   instructors[serverSocket] = clients[serverSocket];
+	   if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[name]) > 0){
+		   auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
+	       if (it == std::end(last_instructors)){
+	         for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
+	         last_instructors[2] = servers[name];
+	       }
+	       else{
+		      *it = servers[name];
+	       }
+	   }
+   }
    
    // Do a DFS for other servers through this one
    for (int i = 1; i < parts.size(); i += 3){
@@ -325,6 +355,7 @@ void connectServer(const char *IP, const char *port, const char *name)
 	   }
 	   std::string new_name = parts[i];
 	   std::string new_IP = parts[i+1];
+	   if (new_IP == myIP) continue;
 	   std::string new_port = parts[i+2];
 	   if (!servers[new_name]) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
    }
@@ -497,13 +528,54 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 				servers.erase(instructor->name);
 				instructors.erase(instructor->sock);
 			}
+			struct sockaddr_in server_addr;
+			socklen_t server_len = sizeof(server_addr);
+			char server_ip[INET_ADDRSTRLEN];
+			int server_port;
+
+			if (getpeername(serverSocket, (struct sockaddr *)&server_addr, &server_len) == -1) {
+				perror("Error getting server IP and port");
+				disconnectedClients->push_back(clients[serverSocket]);
+				closeClient(serverSocket, openSockets, maxfds);
+				return;
+			}
+			else {
+				inet_ntop(AF_INET, &(server_addr.sin_addr), server_ip, INET_ADDRSTRLEN);
+				server_port = ntohs(server_addr.sin_port);
+			}
+			
 			// Add name
 			servers[server_name] = new Server(serverSocket);
 			servers[server_name]->name = server_name;
+			servers[server_name]->IP = std::string(server_ip);
+			servers[server_name]->port = std::to_string(server_port);
 			clients[serverSocket]->name = server_name;
 			
+			if (std::count(std::begin(last_five), std::end(last_five), servers[server_name]) > 0){
+				auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
+				if (it == std::end(last_five)){
+				   for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
+				   last_five[4] = servers[server_name];
+				}
+				else{
+					*it = servers[server_name];
+				}
+			}
+			
 			// Add server to instructor list if it is an instructor server
-			if (server_name[0] == 'I') instructors[serverSocket] = clients[serverSocket];
+			if (server_name[0] == 'I'){
+				instructors[serverSocket] = clients[serverSocket];
+				if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[server_name]) > 0){
+					auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
+					if (it == std::end(last_instructors)){
+					   for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
+					   last_instructors[2] = servers[server_name];
+					}
+					else{
+						*it = servers[server_name];
+					}
+				}
+			}
 			
 			// Send back SERVERS
 			std::string response = "SERVERS,";
@@ -725,6 +797,14 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   {
       clients[clientSocket]->name = tokens[1];
   }
+	// Set myIP so we don't connect to our machine
+	// MY_IP,<IP tala>
+	else if (line == "MY_IP") 
+	{
+		size_t comma = line.find(',');
+		std::string IP = line.substr(comma +1);
+		myIP = IP;
+	}
   else
   {
       std::cout << "Unknown command from client:" << buffer << std::endl;
@@ -892,6 +972,9 @@ int main(int argc, char* argv[])
                 // Remove client from the clients list
                 for(auto const& c : disconnectedClients)
                     clients.erase(c->sock);
+                if (servers.size() > 1 && servers.size() < 3){
+					
+				}
             }
         }
     }
