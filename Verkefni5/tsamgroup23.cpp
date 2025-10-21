@@ -473,6 +473,34 @@ void recvMsg(int serverSocket, const char *buffer){
 	log_lister(serverSocket, "sent " + line);
 }
 
+void outGoingStatusReq()
+{
+    // The command string
+    std::string command_str = "STATUSREQ";
+
+    // Assemble the framed packet just once, since it's the same for all peers.
+    uint16_t total_length = 5 + command_str.length();
+    uint16_t network_length = htons(total_length);
+
+    char packet[total_length];
+    packet[0] = 0x01; // SOH
+    memcpy(packet + 1, &network_length, 2);
+    packet[3] = 0x02; // STX
+    memcpy(packet + 4, command_str.c_str(), command_str.length());
+    packet[total_length - 1] = 0x03; // ETX
+    
+    // Loop through all connected peer servers and send them the packet.
+    for (auto const& pair : servers)
+    {
+        Server* server = pair.second;
+        
+        // Send the request.
+        send(server->sock, packet, total_length, 0);
+        // Logit
+        log_lister(server->sock, "Sent STATUSREQ to " + server->name);
+    }
+}
+
 // Process command from server to the server
 // Make sure to read all commands from the buffer if there are more than one
 void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, 
@@ -499,8 +527,8 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 	
 	// Use for-loop to iterate through all messages
 	for (int i = 0; i < messages.size(); i++){
-		u_int16_t len = (u_int8_t)messages[i][1] << 8;   // þarf að vera buffer[1 og 2]
-		len += (u_int8_t)messages[i][0];                 // BTW ég veit ekkert hvort þetta sé rétta leiðin til að taka við svona
+		u_int16_t len = (u_int8_t)messages[i][1] << 8;   // þarf að vera buffer[1 og 2] // TODO: ask about this
+		len += (u_int8_t)messages[i][0];
 		len = ntohs(len);
 		if (messages[i][2] != 0x002){
 		  log_lister(serverSocket, "Did not send <STX>");
@@ -654,15 +682,97 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		}
 		
 		else if (command.rfind("STATUSREQ", 0) == 0){
-			
+            log_lister(serverSocket, "Received STATUSREQ from a peer.");
+
+			// Start building the response string.
+            std::string response_body = "STATUSRESP,";
+
+            // Iterate through messageQueues map to find all the groups we are holding messages for.
+            for (auto const& pair : messageQueues)
+            {
+                std::string group_id = pair.first;
+                size_t msg_count = pair.second.size();
+
+                // Only add an entry if there are actually messages for that group.
+                if (msg_count > 0)
+                {
+                    response_body += group_id + "," + std::to_string(msg_count) + ",";
+                }
+            }
+            // Remove the final trailing comma
+            if (response_body.back() == ',')
+            {
+                response_body.pop_back();
+            }
+            
+            // Frame and send the response packet back to the requesting server.
+            uint16_t total_length = 5 + response_body.length();
+            uint16_t network_length = htons(total_length);
+
+            char packet[total_length];
+            packet[0] = 0x01; // SOH
+            memcpy(packet + 1, &network_length, 2);
+            packet[3] = 0x02; // STX
+            memcpy(packet + 4, response_body.c_str(), response_body.length());
+            packet[total_length - 1] = 0x03; // ETX
+
+            send(serverSocket, packet, total_length, 0);
+            log_lister(serverSocket, "Sent STATUSRESP: " + response_body);
 		}
 		
 		else if (command.rfind("SENDMSG, 0") == 0){
 			recvMsg(serverSocket, command.c_str());
 		}
 		
-	}
 
+        else if (command.rfind("STATUSRESP,", 0) == 0)
+		{
+            log_lister(serverSocket, "Received STATUSRESP: " + command);
+
+            // Parse the response. Get the data part after sending "STATUSRESP,"
+            // Expected data example: "A5_4,20,A5_71,2"
+            std::string data = command.substr(11); 
+            std::stringstream ss(data);
+            std::string part;
+            std::vector<std::string> parts;
+            while(std::getline(ss, part, ','))
+            {
+                parts.push_back(part);
+            }
+
+            // Loop through the pairs of (group_id, msg_count) and take action.
+            // The vector will look like: ["A5_4", "20", "A5_71", "2"]
+            for(size_t i = 0; i < parts.size(); i += 2)
+            {
+                // Ensure we do not read past the end of the vector
+                if (i + 1 >= parts.size()) continue;
+
+                std::string group_id = parts[i];
+                int msg_count = 0;
+                try {
+                    msg_count = std::stoi(parts[i+1]);
+                } catch(const std::exception& e) {
+                    log_lister(serverSocket, "Invalid message count in STATUSRESP for group " + group_id);
+                    continue; // Skip to the next pair
+                }
+                
+                // Decide whether to retrieve the messages.
+                std::string our_group_id = "A5_23"; // Our group ID
+                
+                // Check if the messages are for us OR for a peer we are directly connected to.
+                if(group_id == our_group_id || servers.count(group_id))
+                {
+                    log_lister(serverSocket, "Peer has " + std::to_string(msg_count) + " messages for " + group_id + ". Retrieving them.");
+                    
+                    // Request each message by calling getMsg function.
+                    for(int j = 0; j < msg_count; j++)
+                    {
+                        getMsg(serverSocket, group_id.c_str());
+                    }
+                }
+            }
+        }
+	}
 }
 
 // Process command from client on the server
@@ -889,7 +999,6 @@ void keepAlive()
 }
 }
 
-
 int main(int argc, char* argv[])
 {
     bool finished;
@@ -950,6 +1059,7 @@ int main(int argc, char* argv[])
         if(currentTime - lastKeepAliveTime >= 60)
         {
             keepAlive();
+            outGoingStatusReq();
             lastKeepAliveTime = currentTime;
         }
 
@@ -1011,7 +1121,7 @@ int main(int argc, char* argv[])
                       }
                   }
                }
-                // Remove client from the clients list
+                // Remove client from the clients list  // TODO: Delete?
                 for(auto const& c : disconnectedClients)
                     clients.erase(c->sock);
                 if (servers.size() > 1 && servers.size() < 3){
