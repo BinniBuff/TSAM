@@ -543,6 +543,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		}
 		
 		else if (command.rfind("STATUSREQ", 0) == 0){
+            // kalla í status request föllin hér
 			
 		}
 		
