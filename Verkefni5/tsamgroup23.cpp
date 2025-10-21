@@ -106,6 +106,7 @@ std::map<int, Client*> instructors; // Lookup table for instructor servers infor
 std::map<std::string, std::list<Message>> messageQueues;
 // A reference to our IP so we don't connect to it
 std::string myIP = "";
+std::string myPort = "";
 // A cache of last 5 connected IPs
 Server *last_five[5];
 // A cache of last 3 connected instructor IPs
@@ -134,7 +135,7 @@ void log_lister(int clientSocket, const std::string& message)
 
     // output í *.log
     std::ofstream log(filename, std::ios::app); 
-    if (clientSocket == 0)
+    if (clientSocket <= 0)
     {
 		log << "[" << time_buffer << "] " << " Not from a server or client connection, probably error connecting: " << message << std::endl;
 	}
@@ -311,13 +312,18 @@ void connectServer(const char *IP, const char *port, const char *name)
 	   log_lister(0, "Send() HELO failed when connecting to " + std::string(IP) + " " + std::string(port));
    }
    
-   memset(in_buffer, 0, sizeof(in_buffer));
-   nread = read(serverSocket, in_buffer, sizeof(in_buffer));
+    struct timeval tv;
+    tv.tv_sec = 2;  // Wait for 2 seconds for a reply
+    tv.tv_usec = 0;
+    setsockopt(serverSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+    memset(in_buffer, 0, sizeof(in_buffer));
+    nread = read(serverSocket, in_buffer, sizeof(in_buffer));
    
    if(nread < 0)
    {
 	   perror("read() from server failed: ");
 	   log_lister(0, "read() failed when connecting to " + std::string(IP) + " " + std::string(port));
+       return;
    }
    // parse the message, see if it is SERVERS,GROUP_NAME,IP,PORT
    std::string message = (std::string)(in_buffer + 4);
@@ -325,7 +331,6 @@ void connectServer(const char *IP, const char *port, const char *name)
    std::vector<std::string> parts;
    
    std::stringstream ss(message);
-   
    while (std::getline(ss, tmp, ',')){
 	   parts.push_back(tmp);
    }
@@ -342,7 +347,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    servers[name]->IP = IP;
    servers[name]->port = port;
    log_lister(serverSocket, "Server connected after receiving HELO from our server");
-   if (std::count(std::begin(last_five), std::end(last_five), servers[name]) > 0){
+   if (std::count(std::begin(last_five), std::end(last_five), servers[name]) == 0){
 	   auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
 	   if (it == std::end(last_five)){
 	      for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
@@ -354,7 +359,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    }
    if (name[0] == 'I'){
 	   instructors[serverSocket] = clients[serverSocket];
-	   if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[name]) > 0){
+	   if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[name]) == 0){
 		   auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
 	       if (it == std::end(last_instructors)){
 	         for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
@@ -373,9 +378,9 @@ void connectServer(const char *IP, const char *port, const char *name)
 	   }
 	   std::string new_name = parts[i];
 	   std::string new_IP = parts[i+1];
-	   if (new_IP == myIP) continue;
 	   std::string new_port = parts[i+2];
-	   if (!servers[new_name]) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
+       if (new_IP == myIP && new_port == myPort) continue;
+       if (servers.count(new_name) == 0) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
    }
 }
 
@@ -412,7 +417,7 @@ void sendMsg(int serverSocket, const char *to_name){
 	// Get group ID for servers map
 	std::string serverGroupID = std::string(to_name);
 	// Should sendMsg send all messages intended for group? or only one per call to it?
-	for (int i = 0; i < messageQueues[serverGroupID].size(); i++){
+	while(!messageQueues[serverGroupID].empty()){
 		
 		// Create a send msg
 		std::string message_to_send = "SENDMSG,";
@@ -468,7 +473,7 @@ void recvMsg(int serverSocket, const char *buffer){
 		messageQueues[toGroupID].push_back(newMessage);
 		
 		// Viljum við senda beint ef message'ið er til einhvers sem við erum tengdir?
-		if (servers[toGroupID]) sendMsg(serverSocket, toGroupID.c_str());
+		if (servers.count(toGroupID)) sendMsg(servers[toGroupID]->sock, toGroupID.c_str());
 	}
 	log_lister(serverSocket, "sent " + line);
 }
@@ -514,7 +519,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 	
 	// Split buffer up by messages
 	std::string stream = std::string(buffer);
-	size_t start = stream.find(0x001);
+    size_t start = stream.find('\x01');
 	std::string all_messages = std::string(buffer + start);
 	std::string tmp;
 	std::vector<std::string> messages;
@@ -527,8 +532,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 	
 	// Use for-loop to iterate through all messages
 	for (int i = 0; i < messages.size(); i++){
-		u_int16_t len = (u_int8_t)messages[i][1] << 8;   // þarf að vera buffer[1 og 2] // TODO: ask about this
-		len += (u_int8_t)messages[i][0];
+		u_int16_t len = (u_int8_t)messages[i][0] << 8 | (u_int8_t)messages[i][1];
 		len = ntohs(len);
 		if (messages[i][2] != 0x002){
 		  log_lister(serverSocket, "Did not send <STX>");
@@ -559,7 +563,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		
 		// Find the part that is just the command
 		size_t etx = messages[i].find(0x003);
-		std::string command = messages[i].substr(3, etx);
+		std::string command = messages[i].substr(3, etx - 3);
 		
 		// Commands
 		if (command.rfind("HELO", 0) == 0){
@@ -602,7 +606,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 			servers[server_name]->port = std::to_string(server_port);
 			clients[serverSocket]->name = server_name;
 			
-			if (std::count(std::begin(last_five), std::end(last_five), servers[server_name]) > 0){
+			if (std::count(std::begin(last_five), std::end(last_five), servers[server_name]) == 0){
 				auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
 				if (it == std::end(last_five)){
 				   for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
@@ -616,7 +620,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 			// Add server to instructor list if it is an instructor server
 			if (server_name[0] == 'I'){
 				instructors[serverSocket] = clients[serverSocket];
-				if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[server_name]) > 0){
+				if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[server_name]) == 0){
 					auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
 					if (it == std::end(last_instructors)){
 					   for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
@@ -767,7 +771,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
                     // Request each message by calling getMsg function.
                     for(int j = 0; j < msg_count; j++)
                     {
-                        getMsg(serverSocket, group_id.c_str());
+                        getMsgs(serverSocket, group_id.c_str());
                     }
                 }
             }
@@ -903,6 +907,17 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
             }
             send(clientSocket, client_list_msg.c_str(), client_list_msg.length(), 0);
         }
+        // Set myIP so we don't connect to our machine
+        // MY_IP,<IP number>,<Socket number>
+        else if (line == "MY_IP")
+        {
+            size_t first_comma = line.find(',');
+            size_t second_comma = line.find(',');
+            std::string IP = line.substr(first_comma + 1, second_comma - (first_comma + 1));
+            std::string port = line.substr(second_comma + 1);
+            myIP = IP;
+            myPort = port;
+        }
         else 
         {
   std::vector<std::string> tokens;
@@ -948,14 +963,6 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   {
       clients[clientSocket]->name = tokens[1];
   }
-	// Set myIP so we don't connect to our machine
-	// MY_IP,<IP tala>
-	else if (line == "MY_IP") 
-	{
-		size_t comma = line.find(',');
-		std::string IP = line.substr(comma +1);
-		myIP = IP;
-	}
   else
   {
       std::cout << "Unknown command from client:" << buffer << std::endl;
@@ -1023,7 +1030,7 @@ int main(int argc, char* argv[])
 
     listenSock = open_socket(atoi(argv[1])); 
     printf("Listening on port: %d\n", atoi(argv[1]));
-    log_lister(4, "Server started listening on port " + std::to_string(atoi(argv[1])));
+    log_lister(0, "Server started listening on port " + std::to_string(atoi(argv[1])));
 
     if(listen(listenSock, BACKLOG) < 0)
     {
@@ -1105,11 +1112,11 @@ int main(int argc, char* argv[])
                       // recv() == 0 means client has closed connection
                       if(recv(client->sock, buffer, sizeof(buffer), MSG_DONTWAIT) == 0)
                       {
-                          disconnectedClients.push_back(client);
-                          servers.erase(client->name);
-                          if (client->name[0] == 'I') instructors.erase(client->sock);
-                          closeClient(client->sock, &openSockets, &maxfds);
-                          log_lister(clientSock, "client disconnected.");
+                            log_lister(client->sock, "client disconnected.");
+                            disconnectedClients.push_back(client);
+                            servers.erase(client->name);
+                            if (!client->name.empty() && client->name[0] == 'I') instructors.erase(client->sock);
+                            closeClient(client->sock, &openSockets, &maxfds);
 
                       }
                       // We don't check for -1 (nothing received) because select()
@@ -1121,9 +1128,12 @@ int main(int argc, char* argv[])
                       }
                   }
                }
-                // Remove client from the clients list  // TODO: Delete?
+                // Remove client from the clients list  // TODO: Delete?, DONE
                 for(auto const& c : disconnectedClients)
+                {
+                    delete clients[c->sock];
                     clients.erase(c->sock);
+                }
                 if (servers.size() > 1 && servers.size() < 3){
 					
 				}
