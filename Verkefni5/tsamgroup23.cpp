@@ -29,6 +29,8 @@
 #include <charconv>
 // #include <sstream>
 #include <ctime>
+#include <chrono> // For std::chrono::seconds
+#include <thread> // For std::this_thread::sleep_for
 
 // #include <unistd.h>
 
@@ -303,9 +305,20 @@ void connectServer(const char *IP, const char *port, const char *name)
        }
    }
    
-   memset(buffer, 0, sizeof(buffer));
-   strcpy(buffer, "HELO,FROM_GROUP_23"); // líka hægt að ger char* fyrir message og assign'a það í send message.c_str() og message.size() 
-   nwrite = send(serverSocket, buffer, strlen(buffer),0);
+   std::this_thread::sleep_for(std::chrono::seconds(1));
+   
+   std::string helo = "HELO,FROM_GROUP_23";
+   uint16_t total_length = 5 + helo.length();
+   uint16_t network_length = htons(total_length);
+
+   char packet[total_length];
+   packet[0] = 0x01; // SOH
+   memcpy(packet + 1, &network_length, 2);
+   packet[3] = 0x02; // STX
+   memcpy(packet + 4, helo.c_str(), helo.length());
+   packet[total_length - 1] = 0x03; // ETX
+   
+   nwrite = send(serverSocket, packet, total_length, 0);
 
    if(nwrite  == -1)
    {
@@ -513,7 +526,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
                   const char *buffer, std::list<Client *> *disconnectedClients) 
 {
 	//check if buffer has more than 5 bytes
-	if (sizeof(buffer) < 5){
+	if (strlen(buffer) < 5){
 	  log_lister(serverSocket, "Did not send enough bytes");
 	  return;
 	}
@@ -535,8 +548,9 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 	for (int i = 0; i < messages.size(); i++){
 		u_int16_t len = (u_int8_t)messages[i][0] << 8 | (u_int8_t)messages[i][1];
 		len = ntohs(len);
-		if (messages[i][2] != 0x002){
+		if (messages[i][2] != '\x02'){
 		  log_lister(serverSocket, "Did not send <STX>");
+		  std::cout << "Missing STX" << std::endl;
 		  continue;
 		}
 
@@ -557,13 +571,13 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
             return;
 		}
 		
-		if (messages[i][len - 1] != 0x003 && messages[i][messages[i].size() - 1] != 0x003){
+		if (messages[i][len - 1] != '\x03' && messages[i][messages[i].size() - 1] != '\x03'){
 		  log_lister(serverSocket, "Did not send <ETX>");
 		  continue;
 		}
 		
 		// Find the part that is just the command
-		size_t etx = messages[i].find(0x003);
+		size_t etx = messages[i].find('\x03');
 		std::string command = messages[i].substr(3, etx - 3);
 		
 		// Commands
@@ -800,7 +814,8 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   }
   
   // If the first byte is SOH then the client is a server
-  if (buffer[0] == 0x001 || clients[clientSocket]->name[0] == 'A' || clients[clientSocket]->name[0] == 'I'){
+  if (buffer[0] == '\x01' || clients[clientSocket]->name[0] == 'A' || clients[clientSocket]->name[0] == 'I'){
+	  std::cout << "server got in" << std::endl;
 	  log_lister(clientSocket, "first byte is correct <SOH>, got into servermessage");
 	  serverCommand(clientSocket, openSockets, maxfds, buffer, disconnectedClients);
 	  return;
