@@ -523,16 +523,16 @@ void outGoingStatusReq()
 // Process command from server to the server
 // Make sure to read all commands from the buffer if there are more than one
 void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds, 
-                  const char *buffer, std::list<Client *> *disconnectedClients) 
+                  const char *buffer, size_t message_len, std::list<Client *> *disconnectedClients) 
 {
 	//check if buffer has more than 5 bytes
-	if (strlen(buffer) < 5){
+	if (message_len < 5){
 	  log_lister(serverSocket, "Did not send enough bytes");
 	  return;
 	}
 	
 	// Split buffer up by messages
-	std::string stream = std::string(buffer);
+	std::string stream(buffer, message_len);
     size_t start = stream.find('\x01');
 	std::string all_messages = std::string(buffer + start);
 	std::string tmp;
@@ -797,8 +797,9 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 // Process command from client on the server
 
 void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds, 
-                  char *buffer, std::list<Client *> *disconnectedClients) 
+                  char *buffer, size_t message_len, std::list<Client *> *disconnectedClients) 
 {
+	std::cout << "Inside client command buffer: " << buffer << " length of buffer: " << message_len << std::endl;
 	// Make sure there is nothing left from this socket from before
   if (clients[clientSocket]->client_buffer[0] != 0){
 	  // see if there are leftover messages in the buffer. if so we need to finish those before addressing new ones
@@ -809,7 +810,7 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
 	  log_lister(clientSocket, "sent a message that got split and we have gotten the first part from the client and added to the second part just received");
 	  
 	  line += std::string(buffer);
-	  serverCommand(clientSocket, openSockets, maxfds, line.c_str(), disconnectedClients);
+	  serverCommand(clientSocket, openSockets, maxfds, line.c_str(), message_len, disconnectedClients);
 	  return;
   }
   
@@ -817,7 +818,7 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
   if (buffer[0] == '\x01' || clients[clientSocket]->name[0] == 'A' || clients[clientSocket]->name[0] == 'I'){
 	  std::cout << "server got in" << std::endl;
 	  log_lister(clientSocket, "first byte is correct <SOH>, got into servermessage");
-	  serverCommand(clientSocket, openSockets, maxfds, buffer, disconnectedClients);
+	  serverCommand(clientSocket, openSockets, maxfds, buffer, message_len, disconnectedClients);
 	  return;
   }
   std::string line(buffer);
@@ -1104,7 +1105,8 @@ int main(int argc, char* argv[])
                   if(FD_ISSET(client->sock, &readSockets))
                   {
                       // recv() == 0 means client has closed connection
-                      if(recv(client->sock, buffer, sizeof(buffer), MSG_DONTWAIT) == 0)
+                      ssize_t message_len = recv(client->sock, buffer, sizeof(buffer), MSG_DONTWAIT);
+                      if( message_len == 0)
                       {
                             log_lister(client->sock, "client disconnected.");
                             disconnectedClients.push_back(client);
@@ -1117,7 +1119,9 @@ int main(int argc, char* argv[])
                       // only triggers if there is something on the socket for us.
                       else
                       {
-                          clientCommand(client->sock, &openSockets, &maxfds, buffer, &disconnectedClients);
+						  std::cout << "Buffer: " << buffer << " - length: " << message_len << std::endl;
+						  std::cout << "Buffer byte 5: " << buffer[5] << " - length: " << message_len << std::endl;
+                          clientCommand(client->sock, &openSockets, &maxfds, buffer, (size_t)message_len, &disconnectedClients);
                           log_lister(client->sock, "Recived data: " + std::string(buffer));
                       }
                   }
