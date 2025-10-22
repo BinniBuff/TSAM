@@ -531,24 +531,30 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 	  return;
 	}
 	
+	std::cout << "Inside serverCommand, byte 5 of buffer: " << buffer[4] << std::endl;
+	
 	// Split buffer up by messages
 	std::string stream(buffer, message_len);
+	std::cout << "before while loop, byte 5 of stream: " << stream[4] << std::endl;
     size_t start = stream.find('\x01');
 	std::string all_messages = std::string(buffer + start);
+	std::cout << "before while loop, byte 5 of all_messages: " << all_messages[4] << std::endl;
 	std::string tmp;
 	std::vector<std::string> messages;
 
 	std::stringstream ss(all_messages);
 
 	while (std::getline(ss, tmp, '\x01')){ //DEBUG: val 3 þarf að vera char eða strengur, breytti úr hex 0x001 í 'x01' því getline tekur(strem, string, delim char)
+	   std::cout << "Inside while loop, byte 5 of tmp: " << tmp[4] << std::endl;
 	   messages.push_back(tmp);
 	}
 	
 	// Use for-loop to iterate through all messages
 	for (int i = 0; i < messages.size(); i++){
-		u_int16_t len = (u_int8_t)messages[i][0] << 8 | (u_int8_t)messages[i][1];
+		std::cout << "Inside serverCommand, byte 5 of messages[i]: " << messages[i][4] << std::endl;
+		u_int16_t len = (u_int8_t)messages[i][1] << 8 | (u_int8_t)messages[i][2];
 		len = ntohs(len);
-		if (messages[i][2] != '\x02'){
+		if (messages[i][3] != '\x02'){
 		  log_lister(serverSocket, "Did not send <STX>");
 		  std::cout << "Missing STX" << std::endl;
 		  continue;
@@ -578,7 +584,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		
 		// Find the part that is just the command
 		size_t etx = messages[i].find('\x03');
-		std::string command = messages[i].substr(3, etx - 3);
+		std::string command = messages[i].substr(4, etx - 4);
 		
 		// Commands
 		if (command.rfind("HELO", 0) == 0){
@@ -1120,7 +1126,7 @@ int main(int argc, char* argv[])
                       else
                       {
 						  std::cout << "Buffer: " << buffer << " - length: " << message_len << std::endl;
-						  std::cout << "Buffer byte 5: " << buffer[5] << " - length: " << message_len << std::endl;
+						  std::cout << "Buffer byte 5: " << buffer[4] << " - length: " << message_len << std::endl;
                           clientCommand(client->sock, &openSockets, &maxfds, buffer, (size_t)message_len, &disconnectedClients);
                           log_lister(client->sock, "Recived data: " + std::string(buffer));
                       }
