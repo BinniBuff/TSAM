@@ -108,9 +108,9 @@ std::map<std::string, std::list<Message>> messageQueues;
 std::string myIP = "";
 std::string myPort = "";
 // A cache of last 5 connected IPs
-Server *last_five[5];
+Server *last_five[5] = {nullptr};
 // A cache of last 3 connected instructor IPs
-Server *last_instructors[3];
+Server *last_instructors[3] = {nullptr};
 
 fd_set openSockets;             // Current open sockets 
 int maxfds;                     // Passed to select() as max fd in set
@@ -152,6 +152,39 @@ void log_lister(int clientSocket, const std::string& message)
 		}
     }
 
+}
+
+void removeServerBySocket(int sock) {
+    // Remove from servers map
+    for (auto it = servers.begin(); it != servers.end(); ) {
+        if (it->second->sock == sock) {
+            delete it->second; // free the Server object
+            it = servers.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Remove from instructors
+    for (auto it = instructors.begin(); it != instructors.end(); ) {
+        if (it->second->sock == sock) {
+            it = instructors.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Remove from last_five
+    for (int i = 0; i < 5; i++) {
+        if (last_five[i] && last_five[i]->sock == sock)
+            last_five[i] = nullptr;
+    }
+
+    // Remove from last_instructors
+    for (int i = 0; i < 3; i++) {
+        if (last_instructors[i] && last_instructors[i]->sock == sock)
+            last_instructors[i] = nullptr;
+    }
 }
 
 int open_socket(int portno)
@@ -551,12 +584,13 @@ void serverCommand(int serverSocket,
 		}
 		
 		// Find the part that is just the command
-		size_t etx = messages[i].find('\x03');
-		if (etx == std::string::npos || etx < 3) {
+		size_t etx = messages[i].find('\x03', 3);
+		if (etx == std::string::npos || etx <= 3 || etx > messages[i].size()) {
 			// malformed / no ETX — skip or resync
 			continue;
 		}
-		std::string command = messages[i].substr(3, etx - 3);
+		size_t payload_len = (etx > 3) ? (etx - 3) : 0;
+		std::string command = messages[i].substr(3, payload_len);
 		std::cout << "Command: " << command << std::endl;
 		
 		// Commands
@@ -568,14 +602,14 @@ void serverCommand(int serverSocket,
 				if (instructors.size() < 1){
 					disconnectedClients->push_back(clients[serverSocket]);
 					closeClient(serverSocket);
+					removeServerBySocket(serverSocket);
 					return;
 				}
 				// kick out instructor server
 				Client *instructor = instructors.begin()->second;
 				disconnectedClients->push_back(instructor);
 				closeClient(instructor->sock);
-				servers.erase(instructor->name);
-				instructors.erase(instructor->sock);
+				removeServerBySocket(instructor->sock);
 			}
 			struct sockaddr_in server_addr;
 			socklen_t server_len = sizeof(server_addr);
@@ -586,6 +620,7 @@ void serverCommand(int serverSocket,
 				perror("Error getting server IP and port");
 				disconnectedClients->push_back(clients[serverSocket]);
 				closeClient(serverSocket);
+				removeServerBySocket(serverSocket);
 				return;
 			}
 			else {
@@ -749,6 +784,11 @@ void serverCommand(int serverSocket,
 			   }
 			   if (servers.size() >= 7){
 				   return;
+			   }
+			   
+			   if (nested_parts.size() < 3) {
+				   std::cout << "Skipping malformed server entry: " << parts[i] << std::endl;
+			   	   continue;
 			   }
 			   std::string new_name = nested_parts[0];
 			   std::string new_IP = nested_parts[1];
@@ -1122,9 +1162,8 @@ int main(int argc, char* argv[])
                       {
                             log_lister(client->sock, "client disconnected.");
                             disconnectedClients.push_back(client);
-                            servers.erase(client->name);
-                            if (!client->name.empty() && client->name[0] == 'I') instructors.erase(client->sock);
                             closeClient(client->sock);
+                            removeServerBySocket(client->sock);
 
                       }
                       // We don't check for -1 (nothing received) because select()
