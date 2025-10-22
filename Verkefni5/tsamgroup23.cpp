@@ -537,7 +537,11 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 	std::string stream(buffer, message_len);
 	std::cout << "before while loop, byte 5 of stream: " << stream[4] << std::endl;
     size_t start = stream.find('\x01');
-	std::string all_messages = std::string(buffer + start);
+    if (start == std::string::npos) {
+		log_lister(serverSocket, "No SOH found");
+		return;
+	}
+	std::string all_messages = stream.substr(start);
 	std::cout << "before while loop, byte 5 of all_messages: " << all_messages[4] << std::endl;
 	std::string tmp;
 	std::vector<std::string> messages;
@@ -552,9 +556,9 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 	// Use for-loop to iterate through all messages
 	for (int i = 0; i < messages.size(); i++){
 		std::cout << "Inside serverCommand, byte 5 of messages[i]: " << messages[i][4] << std::endl;
-		u_int16_t len = (u_int8_t)messages[i][1] << 8 | (u_int8_t)messages[i][2];
+		u_int16_t len = (u_int8_t)messages[i][0] << 8 | (u_int8_t)messages[i][1];
 		len = ntohs(len);
-		if (messages[i][3] != '\x02'){
+		if (messages[i][2] != '\x02'){
 		  log_lister(serverSocket, "Did not send <STX>");
 		  std::cout << "Missing STX" << std::endl;
 		  continue;
@@ -588,6 +592,7 @@ void serverCommand(int serverSocket, fd_set *openSockets, int *maxfds,
 		
 		// Commands
 		if (command.rfind("HELO", 0) == 0){
+			std::cout << "inside HELO" << std::endl;
 			size_t comma = command.find(',');
 			std::string server_name = command.substr(comma + 1);	// Everything after the comma should be the server name
 			// only connect if there is room or instructor servers to kick out
