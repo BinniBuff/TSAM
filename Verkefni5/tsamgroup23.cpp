@@ -259,6 +259,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    if(getaddrinfo(IP, port, &hints, &svr) != 0)
    {
        perror("getaddrinfo failed: ");
+       std::cout << IP << ":" << port << " - " << name << std::endl;
        log_lister(0, "getaddrinfo failed when connecting to " + std::string(IP) + " " + std::string(port));
        return;
    }
@@ -852,8 +853,6 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
         // Check for GETMSG command
         else if (line == "GETMSG") 
         {
-			// COULD WE USE SENDMSG FUNCTION?
-            std::cout << "Command: GETMSG" << std::endl;
 
             // Get the group ID of the client asking for a message
             // (Assumes the client has used "CONNECT <groupID>" beforehand)
@@ -862,7 +861,7 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
             if (!clientGroupID.empty() && messageQueues.count(clientGroupID) && !messageQueues[clientGroupID].empty())
             {
                 // Get the oldest message from the front of the queue
-                Message oldestMessage = messageQueues[clientGroupID].front();
+                Message oldestMessage = messageQueues["A5_23"].front();
 
                 // Format message
                 std::string formatted_message = "FROM " + oldestMessage.from + ": " + oldestMessage.body + "\n";
@@ -871,7 +870,7 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
                 send(clientSocket, formatted_message.c_str(), formatted_message.length(), 0);
 
                 // Remove the message from the queue since it's been delivered
-                messageQueues[clientGroupID].pop_front();
+                messageQueues["A5_23"].pop_front();
 
                 // Log event
                 log_lister(clientSocket, "Delivered message from " + oldestMessage.from);
@@ -909,67 +908,47 @@ void clientCommand(int clientSocket, fd_set *openSockets, int *maxfds,
         }
         // Set myIP so we don't connect to our machine
         // MY_IP,<IP number>,<Socket number>
-        else if (line == "MY_IP")
+        else if (line.rfind("MY_IP", 0) == 0)
         {
             size_t first_comma = line.find(',');
-            size_t second_comma = line.find(',');
+            size_t second_comma = line.find(',', first_comma + 1);
             std::string IP = line.substr(first_comma + 1, second_comma - (first_comma + 1));
             std::string port = line.substr(second_comma + 1);
             myIP = IP;
             myPort = port;
         }
-        else 
-        {
-  std::vector<std::string> tokens;
-  std::string token;
-
-  // Split command from client into tokens for parsing
-  std::stringstream stream(buffer);
-
-  while(stream >> token)
-      tokens.push_back(token);
+        // Connect to server using IP, port and name
+   	   else if(line.rfind("CONNECT", 0) == 0)
+	   {
+		  size_t first_comma = line.find(',');
+ 		  size_t second_comma = line.find(',', first_comma + 1);
+ 		  size_t third_comma = line.find(',', second_comma + 1);
+		  std::string IP = line.substr(first_comma + 1, second_comma - (first_comma + 1));
+		  std::string port = line.substr(second_comma + 1, third_comma - (second_comma + 1));
+		  std::string name = line.substr(third_comma + 1);
+		  connectServer(IP.c_str(), port.c_str(), name.c_str());
+	   }
+	   else if(line == "LEAVE")
+	   {
+		   // Close the socket, and leave the socket handling
+		   // code to deal with tidying up clients etc. when
+		   // select() detects the OS has torn down the connection.
+	 
+		   closeClient(clientSocket, openSockets, maxfds);
+	   }
+	   else if(line.rfind("NAME", 0) == 0)
+	   {
+		   size_t comma = line.find(',');
+		   std::string name = line.substr(comma + 1);
+		   clients[clientSocket]->name = name;
+	   }
+       else 
+       {
   
-  // Connect to server using IP, port and name
-  if((tokens[0].compare("CONNECT") == 0) && (tokens.size() == 4))
-  {
-	 connectServer(tokens[1].c_str(), tokens[2].c_str(), tokens[3].c_str());
-  }
-  else if(tokens[0].compare("LEAVE") == 0)
-  {
-      // Close the socket, and leave the socket handling
-      // code to deal with tidying up clients etc. when
-      // select() detects the OS has torn down the connection.
- 
-      closeClient(clientSocket, openSockets, maxfds);
-  }
-  else if(tokens[0].compare("WHO") == 0)
-  {
-     std::cout << "Who is logged on" << std::endl;
-     std::string msg;
-
-     for(auto const& names : clients)
-     {
-        msg += names.second->name + ",";
-
-     }
-     // Reducing the msg length by 1 loses the excess "," - which
-     // granted is totally cheating.
-     send(clientSocket, msg.c_str(), msg.length()-1, 0);
-
-  }
-  // This is slightly fragile, since it's relying on the order
-  // of evaluation of the if statement.
-  else if(tokens[0].compare("NAME") == 0)
-  {
-      clients[clientSocket]->name = tokens[1];
-  }
-  else
-  {
-      std::cout << "Unknown command from client:" << buffer << std::endl;
-      log_lister(clientSocket, "Unknown command from client: " + std::string(buffer));
-  }
+           std::cout << "Unknown command from client:" << buffer << std::endl;
+           log_lister(clientSocket, "Unknown command from client: " + std::string(buffer));
      
-}
+       }
 }
 
 // Sends other servers we are connected to the number of msg in their inbox
