@@ -14,11 +14,13 @@
 
 
 # DESCRIPTION of CHANGES:
-We got the foundation of our code from examples.tar, and have implemented changes to the server file.
+We got the foundation of our code from examples.tar, and have implemented changes to the server from the assignment description from our best of knowledge. The changes in the client code were minimal, we changed the buffer size and added a date stamp from when client commands are sent to the server.
+Newest changes in our project is that we setup a HOME SERVER running under one of the group members internet setup. He setup a second router and connected his old PC to the second router... lets call it router B. Router b was then completely isolated from the main router and is in a DMZ. 
+
 Below you can read the following changes.
 
 - ## CHANGES:
-
+    Previous changes
     1. SERVER: What was implemented was the following: Client commands under the function client_commands(). 
     The commands created was; NAME, SENDMSG, GETMSG, LISTSERVERS, CONNECT.
         - NAME: Name command is for identifying the connected dvice.
@@ -29,6 +31,16 @@ Below you can read the following changes.
         Usage CONNECT <ip> <port>.
 
     2. CLIENT: You get full date after sending messages, changed size for buffer from 1024B to 5000B.
+
+    New changes
+    1. HOME SERVER: Our server is running alone under its own ip completely isolated from the TSAM server. For security we set up a DMZ to protect the internal network from potentionl malicious actors. The server is running on a Linux Ubuntu OS that we booted, it was previously Windows 8. To work on the personal server we set up tunnels from all of our personal devices to the server so we could do changes on the server away from the server network. The server was setup to be able to run 24/7.
+    2. SERVER CODE: 
+        - COMMANDS: clientCommands(), the server is remotely operated through a connected client, the client sends commands to the server to act on.  serverCommand(), the server commands respond to requests by other servers connected.
+        - Functionalities: When we first connect to server we send HELO command seperated with our group Id, and we expect that other servers send HELO back to us when a connection is trying to be estabilished. If we lack connections, we try to connect to other servers through current connections.
+
+
+    
+    
 
 
 
@@ -121,6 +133,14 @@ Under usage you will see how you compile the files and how to use the machine co
         Over and Out
 
 
+    3. To connect to our server:
+        Our server IP and port is 100.85.220.16,4023.
+        
+
+        Run: 
+        - MY_IP,<your ip>,<your port>
+        - CONNECT,130.208.246.98,5001,Instr_1
+        - SENDMSG,A5_23,<your groupid>,"The message for our server!!"
 
 
 # WIRESHARK
