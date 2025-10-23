@@ -872,7 +872,7 @@ void serverCommand(int serverSocket,
 			   std::string new_name = nested_parts[0];
 			   std::string new_IP = nested_parts[1];
 			   std::string new_port = nested_parts[2];
-			   if (new_IP == myIP && new_port == myPort) continue;
+			   if (new_name == myIP && new_port == myPort) continue;
 			   if (servers.count(new_name) == 0) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
 			   std::cout << "end of connect for loop" << std::endl;
 			   /*std::cout << "Connected servers: " << std::endl;
@@ -933,6 +933,11 @@ void serverCommand(int serverSocket,
                 }
             }
         }
+        else
+        {
+			std::cout << "Unknown command from: " << clients[serverSocket]->name << std::endl;
+			log_lister(serverSocket, " has sent an unknown command");
+		}
 	}
 }
 
@@ -1024,14 +1029,14 @@ void clientCommand(int clientSocket,
 
             // Get the group ID of the client asking for a message
             // (Assumes the client has used "CONNECT <groupID>" beforehand)
-            std::string clientGroupID = clients[clientSocket]->name;
+            std::string clientGroupID = "A5_23";
             // Check if group has any mail in their message box
             if (!clientGroupID.empty() && messageQueues.count(clientGroupID) && !messageQueues[clientGroupID].empty())
             {
 				// Missing headers
 				
                 // Get the oldest message from the front of the queue
-                Message oldestMessage = messageQueues["A5_23"].front();
+                Message oldestMessage = messageQueues[clientGroupID].front();
 
                 // Format message
                 std::string formatted_message = "FROM " + oldestMessage.from + ": " + oldestMessage.body + "\n";
@@ -1040,7 +1045,7 @@ void clientCommand(int clientSocket,
                 send(clientSocket, formatted_message.c_str(), formatted_message.length(), 0);
 
                 // Remove the message from the queue since it's been delivered
-                messageQueues["A5_23"].pop_front();
+                messageQueues[clientGroupID].pop_front();
 
                 // Log event
                 log_lister(clientSocket, "Delivered message from " + oldestMessage.from);
