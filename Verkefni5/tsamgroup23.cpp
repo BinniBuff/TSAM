@@ -36,6 +36,8 @@
 #include <fstream>
 #include <ctime>
 #include <string>
+#include <random>
+#include <iterator>
 
 
 // fix SOCK_NONBLOCK for OSX
@@ -139,19 +141,12 @@ void log_lister(int clientSocket, const std::string& message)
     // output í *.log
     std::ofstream log(filename, std::ios::app); 
     auto it = clients.find(clientSocket);
-    if (clientSocket <= 0)
-    {
-		log << "[" << time_buffer << "] " << " Not from a server or client connection, probably error connecting: " << message << std::endl;
-	}
-    else if (clients.count(clientSocket) > 0){ 
-		if (it != clients.end() && it->second && !it->second->name.empty()) { 
-			log << "[" << time_buffer << "] " << it->second->name << " " << message << "\n"; 
-		} 
-		else {
-			log << "[" << time_buffer << "] " << "(socket " << clientSocket << ") " << message << "\n"; 
-		} 
-	}
-	else{ log << "[" << time_buffer << "] " << "(no-socket) " << message << "\n"; }
+    if (it != clients.end() && it->second && !it->second->name.empty()) { 
+		log << "[" << time_buffer << "] " << it->second->name << " " << message << "\n"; 
+	} 
+	else {
+		log << "[" << time_buffer << "] " << "(No-name socket " << clientSocket << ") " << message << "\n"; 
+	} 
 
 }
 
@@ -373,6 +368,7 @@ void connectServer(const char *IP, const char *port, const char *name)
          printf("Failed to open socket to server: %s on port: %s\n", IP, port);
          perror("Connect failed: ");
          log_lister(0, "Connect failed when connecting to " + std::string(IP) + " " + std::string(port));
+         close(serverSocket);
          return;
        }
    }
@@ -507,7 +503,7 @@ void sendMsg(int serverSocket, const char *to_name){
 
 		// Remove the message from the queue since it's been delivered
 		messageQueues[serverGroupID].pop_front();
-		log_lister(serverSocket, "Received SENDMSG from our server");
+		log_lister(serverSocket, "Received SENDMSG from our server: " + message_to_send);
 		std::cout << "We sent " << message_to_send << std::endl;
 	}
 }
@@ -572,6 +568,9 @@ void outGoingStatusReq()
 void serverCommand(int serverSocket, 
                   const char *buffer, size_t message_len, std::list<Client *> *disconnectedClients) 
 {
+	auto it = clients.find(serverSocket);
+	if (it == clients.end() || !it->second) return;
+	
 	//check if buffer has more than 5 bytes
 	if (message_len < 5){
 	  log_lister(serverSocket, "Did not send enough bytes");
@@ -872,7 +871,7 @@ void serverCommand(int serverSocket,
 			   std::string new_name = nested_parts[0];
 			   std::string new_IP = nested_parts[1];
 			   std::string new_port = nested_parts[2];
-			   if (new_name == myIP && new_port == myPort) continue;
+			   if (new_name == "A5_23") continue;
 			   if (servers.count(new_name) == 0) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
 			   std::cout << "end of connect for loop" << std::endl;
 			   /*std::cout << "Connected servers: " << std::endl;
@@ -946,7 +945,9 @@ void serverCommand(int serverSocket,
 void clientCommand(int clientSocket,  
                   char *buffer, size_t message_len, std::list<Client *> *disconnectedClients) 
 {
+	std::cout << "maybe in here? " << std::endl;
 	auto cit = clients.find(clientSocket);
+	std::cout << "after clients.find " << std::endl;
 	if (cit == clients.end() || !cit->second) return;  // socket already gone
 	// Make sure there is nothing left from this socket from before
   if (clients[clientSocket]->client_buffer[0] != 0){
@@ -1281,8 +1282,6 @@ int main(int argc, char* argv[])
 						  printf("Client closed connection: %d\n", client->sock);
                             log_lister(client->sock, "client disconnected.");
                             disconnectedClients.push_back(client);
-                            closeClient(client->sock);
-                            removeServerBySocket(client->sock);
 
                       }
                       // We don't check for -1 (nothing received) because select()
@@ -1294,11 +1293,21 @@ int main(int argc, char* argv[])
                       }
                   }
                }
+                std::vector<int> socketsToDelete;
                 // Remove client from the clients list  // TODO: Delete?, DONE
                 for(auto const& c : disconnectedClients)
                 {
-                    delete clients[c->sock];
-                    clients.erase(c->sock);
+                    closeClient(c->sock);
+                    removeServerBySocket(c->sock);
+                    socketsToDelete.push_back(c->sock);
+				}
+				for (int sock : socketsToDelete)
+				{
+					if (clients.count(sock)) 
+					{
+						delete clients[sock];
+						clients.erase(sock);
+					}
                 }
                 if (servers.size() > 1 && servers.size() < 3){
 
@@ -1313,6 +1322,28 @@ int main(int argc, char* argv[])
                         log_lister(s->sock, "Sent HELO to " + s->name + " - " + s->IP + ":" + s->port);
 				    }
                 }
+                if (!messageQueues.empty() && !servers.empty())
+                {
+					std::random_device rd;
+					std::mt19937 gen(rd());
+					std::uniform_int_distribution<> distrib(0, servers.size() - 1);
+
+					int randomIndex = distrib(gen);
+					
+					auto it = servers.begin();
+					std::advance(it, randomIndex);
+					
+					std::uniform_int_distribution<> rec_distrib(0, messageQueues.size() - 1);
+
+					int randomIndexReceiver = rec_distrib(gen);
+					
+					auto rec_it = servers.begin();
+					std::advance(rec_it, randomIndex);
+					
+					std::string receiver = rec_it->first;
+					int random_server = it->second->sock;
+					sendMsg(random_server, receiver.c_str());
+				}
             }
         }
     }
