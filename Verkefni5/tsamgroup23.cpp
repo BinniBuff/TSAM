@@ -276,6 +276,31 @@ void closeClient(int clientSocket)
 
 }
 
+void sentHelo(int serverSocket, std::string const& myGroup){
+
+   std::string helo = myGroup;
+   uint16_t total_length = 5 + helo.length();
+   uint16_t network_length = htons(total_length);
+
+   char packet[total_length];
+   packet[0] = 0x01; // SOH
+   memcpy(packet + 1, &network_length, 2);
+   packet[3] = 0x02; // STX
+   memcpy(packet + 4, helo.c_str(), helo.length());
+   packet[total_length - 1] = 0x03; // ETX
+   
+   int nwrite = send(serverSocket, packet, total_length, 0);
+
+   if(nwrite  == -1)
+   {
+	   perror("send() to server failed: ");
+	   log_lister(serverSocket, "Send() HELO failed");
+   }
+   
+   log_lister(serverSocket, "Sent HELO: " + helo);
+
+}
+
 void connectServer(const char *IP, const char *port, const char *name)
 {
    struct addrinfo hints, *svr;              // Network host entry for server
@@ -355,24 +380,24 @@ void connectServer(const char *IP, const char *port, const char *name)
    // And update the maximum file descriptor
    maxfds = std::max(maxfds, serverSocket) ;
    
-   std::string helo = "HELO,A5_23";
-   uint16_t total_length = 5 + helo.length();
-   uint16_t network_length = htons(total_length);
+//    std::string helo = "HELO,A5_23";
+//    uint16_t total_length = 5 + helo.length();
+//    uint16_t network_length = htons(total_length);
 
-   char packet[total_length];
-   packet[0] = 0x01; // SOH
-   memcpy(packet + 1, &network_length, 2);
-   packet[3] = 0x02; // STX
-   memcpy(packet + 4, helo.c_str(), helo.length());
-   packet[total_length - 1] = 0x03; // ETX
+//    char packet[total_length];
+//    packet[0] = 0x01; // SOH
+//    memcpy(packet + 1, &network_length, 2);
+//    packet[3] = 0x02; // STX
+//    memcpy(packet + 4, helo.c_str(), helo.length());
+//    packet[total_length - 1] = 0x03; // ETX
    
-   nwrite = send(serverSocket, packet, total_length, 0);
+//    nwrite = send(serverSocket, packet, total_length, 0);
 
-   if(nwrite  == -1)
-   {
-	   perror("send() to server failed: ");
-	   log_lister(0, "Send() HELO failed when connecting to " + std::string(IP) + " " + std::string(port));
-   }
+//    if(nwrite  == -1)
+//    {
+// 	   perror("send() to server failed: ");
+// 	   log_lister(0, "Send() HELO failed when connecting to " + std::string(IP) + " " + std::string(port));
+//    }
    
    std::cout << "Connected to: " << name << " on socket: " << serverSocket << std::endl;
    
@@ -1226,8 +1251,18 @@ int main(int argc, char* argv[])
                     clients.erase(c->sock);
                 }
                 if (servers.size() > 1 && servers.size() < 3){
-					
-				}
+
+                    for (auto const& pair : servers){
+
+                        Server* s = pair.second;
+
+                        sentHelo(s->sock, "A5_23");
+
+                        std::cout << " -> Sent HELO to server " << s->name << " at " << s->IP << ": " << s->port << std::endl;
+
+                        log_lister(s->sock, "Sent HELO to " + s->name + " - " + s->IP + ":" + s->port);
+				    }
+                }
             }
         }
     }
