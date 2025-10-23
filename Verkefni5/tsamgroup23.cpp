@@ -108,9 +108,9 @@ std::map<std::string, std::list<Message>> messageQueues;
 std::string myIP = "";
 std::string myPort = "";
 // A cache of last 5 connected IPs
-Server *last_five[5] = {nullptr};
+//Server *last_five[5] = {nullptr};
 // A cache of last 3 connected instructor IPs
-Server *last_instructors[3] = {nullptr};
+//Server *last_instructors[3] = {nullptr};
 
 fd_set openSockets;             // Current open sockets 
 int maxfds;                     // Passed to select() as max fd in set
@@ -175,16 +175,16 @@ void removeServerBySocket(int sock) {
     }
 
     // Remove from last_five
-    for (int i = 0; i < 5; i++) {
+    /*for (int i = 0; i < 5; i++) {
         if (last_five[i] && last_five[i]->sock == sock)
             last_five[i] = nullptr;
-    }
+    }*/
 
     // Remove from last_instructors
-    for (int i = 0; i < 3; i++) {
+    /*for (int i = 0; i < 3; i++) {
         if (last_instructors[i] && last_instructors[i]->sock == sock)
             last_instructors[i] = nullptr;
-    }
+    }*/
 }
 
 int open_socket(int portno)
@@ -410,7 +410,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    servers[name]->IP = IP;
    servers[name]->port = port;
    log_lister(serverSocket, "Server connected after receiving HELO from our server");
-   if (std::count(std::begin(last_five), std::end(last_five), servers[name]) == 0){
+   /*if (std::count(std::begin(last_five), std::end(last_five), servers[name]) == 0){
 	   auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
 	   if (it == std::end(last_five)){
 	      for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
@@ -419,10 +419,10 @@ void connectServer(const char *IP, const char *port, const char *name)
 	   else{
 	   	   *it = servers[name];
 	   }
-   }
+   }*/
    if (name[0] == 'I'){
 	   instructors[serverSocket] = clients[serverSocket];
-	   if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[name]) == 0){
+	   /*if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[name]) == 0){
 		   auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
 	       if (it == std::end(last_instructors)){
 	         for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
@@ -431,7 +431,7 @@ void connectServer(const char *IP, const char *port, const char *name)
 	       else{
 		      *it = servers[name];
 	       }
-	   }
+	   }*/
    }
    
    sentHelo(serverSocket, "A5_23");
@@ -797,7 +797,7 @@ void serverCommand(int serverSocket,
 				servers[server_name]->port = server_port;
 				clients[serverSocket]->name = server_name;
 				
-				if (std::count(std::begin(last_five), std::end(last_five), servers[server_name]) == 0){
+				/*if (std::count(std::begin(last_five), std::end(last_five), servers[server_name]) == 0){
 					auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
 					if (it == std::end(last_five)){
 					   for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
@@ -806,12 +806,12 @@ void serverCommand(int serverSocket,
 					else{
 						*it = servers[server_name];
 					}
-				}
+				}*/
 				
 				// Add server to instructor list if it is an instructor server
 				if (server_name[0] == 'I'){
 					instructors[serverSocket] = clients[serverSocket];
-					if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[server_name]) == 0){
+					/*if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[server_name]) == 0){
 						auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
 						if (it == std::end(last_instructors)){
 						   for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
@@ -820,7 +820,7 @@ void serverCommand(int serverSocket,
 						else{
 							*it = servers[server_name];
 						}
-					}
+					}*/
 				}
 		   }
 		
@@ -846,11 +846,11 @@ void serverCommand(int serverSocket,
 			   if (new_IP == myIP && new_port == myPort) continue;
 			   if (servers.count(new_name) == 0) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
 			   std::cout << "end of connect for loop" << std::endl;
-			   std::cout << "Connected servers: " << std::endl;
+			   /*std::cout << "Connected servers: " << std::endl;
 				for (auto const& srvrs : servers)
 				{
 					std::cout << " - " << srvrs.second->sock << ":" << srvrs.second->name << " - " << srvrs.second->IP << ":" << srvrs.second->port << std::endl;
-				}
+				}*/
 		   }
 		   std::cout << "after connect for loop" << std::endl;
 		}
@@ -878,6 +878,7 @@ void serverCommand(int serverSocket,
                 if (i + 1 >= parts.size()) continue;
 
                 std::string group_id = parts[i];
+                if (group_id == clients[serverSocket]->name) continue;
                 int msg_count = 0;
                 try {
                     msg_count = std::stoi(parts[i+1]);
@@ -1178,11 +1179,11 @@ int main(int argc, char* argv[])
             lastKeepAliveTime = currentTime;
         }
         
-        std::cout << "Connected servers: " << std::endl;
+        /*std::cout << "Connected servers: " << std::endl;
         for (auto const& srvrs : servers)
         {
 			std::cout << " - " << srvrs.second->sock << ":" << srvrs.second->name << std::endl;
-		}
+		}*/
 
         if(n < 0)
         {
@@ -1225,7 +1226,7 @@ int main(int argc, char* argv[])
             }
             // Now check for commands from clients
             std::list<Client *> disconnectedClients;
-            while(n-- > 0)
+            if(n > 0)
             {
                for(auto const& pair : clients)
                {
