@@ -162,8 +162,41 @@ In the folder you can see there is a file called client-server-trace.pcapng, the
     In the file you can see the communication from the clients point of view. 
     In the output you can view the header payload when testers ran the commands. 
     If you right cick any packet and click (follow TCP stream), 
-    you can see the comunication in plane text from console point of view.
+    1.
+    a) We expect 40 points for implmenting client and server as described in project description.
 
+    b) For early bot we handed in a trace of the wireshark output of commu nication between our client and server (See early bot handin).
+
+    c) We expect to get 10 points for someone elses server connecting to ours, proof:
+    from "events_23-10-25.log" ([23-10-25_16:30:26] A5_29 sent HELO,A5_29). Group A5_29 initiates connection.
+    
+    d) We expect to get 10 points for successfully getting messages from two other groups, proof: 
+    from "events_23-10-25.log" ( 
+     [23-10-25_16:30:31] A5_27 first byte is correct <SOH>, got into servermessage 
+     [23-10-25_16:30:31] A5_27 sent SENDMSG,A5_23,A5_27,[31mH[33me[32ml[36ml[34mo[35m [91mW[93mo[92mr[94ml[95md[0mA5_27 
+     [23-10-25_16:32:19] A5_60 first byte is correct <SOH>, got into servermessage
+     [23-10-25_16:32:19] A5_60 sent SENDMSG,A5_23,A5_28,Hello from A5_28!A5_28
+    )
+    
+    e) We expect to get 10 points for successfully send a message to atleast two other groups (log).
+    
+    f) We expect to get 10 points for correctly handing in the server.
+    
+    g) We expect to get 10 points for structuring the code well and documenting the code and serer produces readable *.log file.
+
+    2.
+    
+    a) We already successfully gathered the extra points for early bot.
+    
+    b) We did not succeed doing ready bot.
+    
+    c) We
+    
+    d) We did not succeed doing inderect bot.
+    
+    e) We expect 10 points for our server being connected to atleast 5 peers at 5 different times.
+    
+    f) We expect 20 points for setting up our personal network successfully implementing external bot.
 
 
 
