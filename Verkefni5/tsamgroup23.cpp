@@ -694,13 +694,30 @@ void serverCommand(int serverSocket,
 			// Get the group ID of the server for whom the message is
 			size_t comma = command.find(',');
 			std::string server_name = command.substr(comma + 1);
-			if (server_name == "A5_23"){
-				
-			}
 			
 			log_lister(serverSocket, "sent " + command);
-            // Check if group has any mail in their message box
-            if (!server_name.empty() && messageQueues.count(server_name) && !messageQueues[server_name].empty())
+			
+			if (server_name == "A5_23"){
+				std::string error_message = "ERROR: STOP TRYING TO STEAL MY MAIL!";
+				uint16_t total_length = 5 + error_message.length();   // Calculate the lenght
+				uint16_t network_length = htons(total_length);  // In network byte order
+				
+				log_lister(serverSocket, "received from our server: " + response);
+
+				// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+				char packet[total_length];
+				packet[0] = 0x01; // SOH
+				memcpy(packet + 1, &network_length, 2);
+				packet[3] = 0x02; // STX
+				memcpy(packet + 4, error_message.c_str(), error_message.length());
+				packet[total_length - 1] = 0x03; // ETX
+
+				// Send packet
+				send(serverSocket, packet, total_length, 0);
+				std::cout << "We sent " << error_message << std::endl;
+				continue;
+			}
+            else if(!server_name.empty() && messageQueues.count(server_name) && !messageQueues[server_name].empty()) // Check if group has any mail in their message box
             {
                 sendMsg(serverSocket, server_name.c_str());
             }
