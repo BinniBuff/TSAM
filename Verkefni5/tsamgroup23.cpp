@@ -253,7 +253,7 @@ int open_socket(int portno)
 void closeClient(int clientSocket)
 {
 
-     printf("Client closed connection: %d\n", clientSocket);
+     printf("Closed connection: %d\n", clientSocket);
      log_lister(clientSocket, "Client closed connection");
 
      // If this client's socket is maxfds then the next lowest
@@ -289,6 +289,14 @@ void connectServer(const char *IP, const char *port, const char *name)
 
    hints.ai_family   = AF_INET;            // IPv4 only addresses
    hints.ai_socktype = SOCK_STREAM;
+   
+   int int_port = atoi(port);
+   
+   if (int_port < 1 || int_port > 10000){
+	   std::cout << "Port not valid" << std::endl;
+	   log_lister(0, "Port not valid when connecting to " + std::string(IP) + " " + std::string(port));
+	   return;
+   }
 
    memset(&hints,   0, sizeof(hints));
    
@@ -366,7 +374,7 @@ void connectServer(const char *IP, const char *port, const char *name)
 	   log_lister(0, "Send() HELO failed when connecting to " + std::string(IP) + " " + std::string(port));
    }
    
-   std::cout << "Connected to: " << name << std::endl;
+   std::cout << "Connected to: " << name << " on socket: " << serverSocket << std::endl;
    
    clients[serverSocket] = new Client(serverSocket);
    servers[name] = new Server(serverSocket);
@@ -422,7 +430,7 @@ void getMsgs(int serverSocket, const char* group_id){
 	send(serverSocket, packet, total_length, 0);
 	
 	log_lister(serverSocket, "Received GETMSGS from our server");
-	
+	std::cout << "We sent " << get_message << std::endl;
 	// Receive from server
 	// How many times to receive? When are we calling GETMSGS? maybe only after we call statusreq? so is then we know how many times to receive
 	// recvMsg(serverSocket, group_id); ------------ SLEPPA? ---------------------
@@ -466,6 +474,7 @@ void sendMsg(int serverSocket, const char *to_name){
 		// Remove the message from the queue since it's been delivered
 		messageQueues[serverGroupID].pop_front();
 		log_lister(serverSocket, "Received SENDMSG from our server");
+		std::cout << "We sent " << message_to_send << std::endl;
 	}
 }
 
@@ -595,68 +604,74 @@ void serverCommand(int serverSocket,
 		
 		// Commands
 		if (command.rfind("HELO", 0) == 0){
-			size_t comma = command.find(',');
-			std::string server_name = command.substr(comma + 1);	// Everything after the comma should be the server name
-			// only connect if there is room or instructor servers to kick out
-			if (clients.size() > 7){
-				if (instructors.size() < 1){
+			bool already_in = false;
+			for (const auto& pair : servers){
+				if (pair.second->sock == serverSocket) already_in = true;
+			}
+			if (!already_in){
+				size_t comma = command.find(',');
+				std::string server_name = command.substr(comma + 1);	// Everything after the comma should be the server name
+				// only connect if there is room or instructor servers to kick out
+				if (servers.size() >= 7){
+					if (instructors.size() < 1){
+						disconnectedClients->push_back(clients[serverSocket]);
+						closeClient(serverSocket);
+						removeServerBySocket(serverSocket);
+						return;
+					}
+					// kick out instructor server
+					Client *instructor = instructors.begin()->second;
+					disconnectedClients->push_back(instructor);
+					closeClient(instructor->sock);
+					removeServerBySocket(instructor->sock);
+				}
+				struct sockaddr_in server_addr;
+				socklen_t server_len = sizeof(server_addr);
+				char server_ip[INET_ADDRSTRLEN];
+				int server_port;
+
+				if (getpeername(serverSocket, (struct sockaddr *)&server_addr, &server_len) == -1) {
+					perror("Error getting server IP and port");
 					disconnectedClients->push_back(clients[serverSocket]);
 					closeClient(serverSocket);
 					removeServerBySocket(serverSocket);
 					return;
 				}
-				// kick out instructor server
-				Client *instructor = instructors.begin()->second;
-				disconnectedClients->push_back(instructor);
-				closeClient(instructor->sock);
-				removeServerBySocket(instructor->sock);
-			}
-			struct sockaddr_in server_addr;
-			socklen_t server_len = sizeof(server_addr);
-			char server_ip[INET_ADDRSTRLEN];
-			int server_port;
-
-			if (getpeername(serverSocket, (struct sockaddr *)&server_addr, &server_len) == -1) {
-				perror("Error getting server IP and port");
-				disconnectedClients->push_back(clients[serverSocket]);
-				closeClient(serverSocket);
-				removeServerBySocket(serverSocket);
-				return;
-			}
-			else {
-				inet_ntop(AF_INET, &(server_addr.sin_addr), server_ip, INET_ADDRSTRLEN);
-				server_port = ntohs(server_addr.sin_port);
-			}
-			
-			// Add name
-			servers[server_name] = new Server(serverSocket);
-			servers[server_name]->name = server_name;
-			servers[server_name]->IP = std::string(server_ip);
-			servers[server_name]->port = std::to_string(server_port);
-			clients[serverSocket]->name = server_name;
-			
-			if (std::count(std::begin(last_five), std::end(last_five), servers[server_name]) == 0){
-				auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
-				if (it == std::end(last_five)){
-				   for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
-				   last_five[4] = servers[server_name];
+				else {
+					inet_ntop(AF_INET, &(server_addr.sin_addr), server_ip, INET_ADDRSTRLEN);
+					server_port = ntohs(server_addr.sin_port);
 				}
-				else{
-					*it = servers[server_name];
-				}
-			}
-			
-			// Add server to instructor list if it is an instructor server
-			if (server_name[0] == 'I'){
-				instructors[serverSocket] = clients[serverSocket];
-				if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[server_name]) == 0){
-					auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
-					if (it == std::end(last_instructors)){
-					   for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
-					   last_instructors[2] = servers[server_name];
+				
+				// Add name
+				servers[server_name] = new Server(serverSocket);
+				servers[server_name]->name = server_name;
+				servers[server_name]->IP = std::string(server_ip);
+				servers[server_name]->port = std::to_string(server_port);
+				clients[serverSocket]->name = server_name;
+				
+				if (std::count(std::begin(last_five), std::end(last_five), servers[server_name]) == 0){
+					auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
+					if (it == std::end(last_five)){
+					   for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
+					   last_five[4] = servers[server_name];
 					}
 					else{
 						*it = servers[server_name];
+					}
+				}
+				
+				// Add server to instructor list if it is an instructor server
+				if (server_name[0] == 'I'){
+					instructors[serverSocket] = clients[serverSocket];
+					if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[server_name]) == 0){
+						auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
+						if (it == std::end(last_instructors)){
+						   for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
+						   last_instructors[2] = servers[server_name];
+						}
+						else{
+							*it = servers[server_name];
+						}
 					}
 				}
 			}
@@ -669,7 +684,7 @@ void serverCommand(int serverSocket,
 				Server *tmp = pair.second;
 				response += tmp->name + ",";
 				response += tmp->IP + ",";
-				response += tmp->port + ",";
+				response += tmp->port;
 				response += ";";
 			}
 			
@@ -688,6 +703,7 @@ void serverCommand(int serverSocket,
 
 			// Send packet
 			send(serverSocket, packet, total_length, 0);
+			std::cout << "We sent " << response << std::endl;
 		}
 		
 		else if (command.rfind("GETMSGS", 0) == 0){
@@ -776,16 +792,16 @@ void serverCommand(int serverSocket,
 		   }
 		   // Do a DFS for other servers through this one
 		   for (int i = 0; i < parts.size(); i ++){
+			   if (servers.size() >= 7){
+				   return;
+			   }
+			   
 			   std::stringstream nested_ss(parts[i]);
 			   std::vector<std::string> nested_parts;
 			   while (std::getline(nested_ss, tmp, ',')){
 				   std::cout << "Inside nested while loop, tmp: " << tmp << std::endl;
 				   nested_parts.push_back(tmp);
 			   }
-			   if (servers.size() >= 7){
-				   return;
-			   }
-			   
 			   if (nested_parts.size() < 3) {
 				   std::cout << "Skipping malformed server entry: " << parts[i] << std::endl;
 			   	   continue;
@@ -796,6 +812,11 @@ void serverCommand(int serverSocket,
 			   if (new_IP == myIP && new_port == myPort) continue;
 			   if (servers.count(new_name) == 0) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
 			   std::cout << "end of connect for loop" << std::endl;
+			   std::cout << "Connected servers: " << std::endl;
+				for (auto const& srvrs : servers)
+				{
+					std::cout << " - " << srvrs.second->sock << ":" << srvrs.second->name << std::endl;
+				}
 		   }
 		   std::cout << "after connect for loop" << std::endl;
 		}
@@ -916,6 +937,8 @@ void clientCommand(int clientSocket,
             std::string ack = "Message for " + resieverGroupID + " has been queued.\n";
             send(clientSocket, ack.c_str(), ack.length(), 0);
             
+            std::cout << "We sent " << ack << std::endl;
+            
             // TODO: 
             // If we are connected to the server we are sending to, send to them, else send to random
         }
@@ -930,6 +953,8 @@ void clientCommand(int clientSocket,
             // Check if group has any mail in their message box
             if (!clientGroupID.empty() && messageQueues.count(clientGroupID) && !messageQueues[clientGroupID].empty())
             {
+				// Missing headers
+				
                 // Get the oldest message from the front of the queue
                 Message oldestMessage = messageQueues["A5_23"].front();
 
@@ -944,12 +969,14 @@ void clientCommand(int clientSocket,
 
                 // Log event
                 log_lister(clientSocket, "Delivered message from " + oldestMessage.from);
+                std::cout << "We sent " << formatted_message << std::endl;
             }
             else
             {
                 // If there are no messages, tell the client
                 const char* no_msg = "No new messages.\n";
                 send(clientSocket, no_msg, strlen(no_msg), 0);
+                std::cout << "We sent " << no_msg << std::endl;
             }
         }
         // Check for LISTSERVERS command
@@ -1116,6 +1143,12 @@ int main(int argc, char* argv[])
             outGoingStatusReq();
             lastKeepAliveTime = currentTime;
         }
+        
+        std::cout << "Connected servers: " << std::endl;
+        for (auto const& srvrs : servers)
+        {
+			std::cout << " - " << srvrs.second->sock << ":" << srvrs.second->name << std::endl;
+		}
 
         if(n < 0)
         {
@@ -1127,24 +1160,34 @@ int main(int argc, char* argv[])
             // First, accept  any new connections to the server on the listening socket
             if(FD_ISSET(listenSock, &readSockets))
             {
+				clientLen = sizeof(client);
                clientSock = accept(listenSock, (struct sockaddr *)&client,
                                    &clientLen);
-               printf("accept***\n");
-               // Add new client to the list of open sockets
-               FD_SET(clientSock, &openSockets);
+				if (servers.size() >= 7 && instructors.size() < 1)
+				{
+					close(clientSock);
+					n--;
+					std::cout << "Denied socket as we are full" << std::endl;
+					log_lister(0, "Denied socket as we are full");
+				}
+				else
+				{
+				   printf("accept***\n");
+				   // Add new client to the list of open sockets
+				   FD_SET(clientSock, &openSockets);
 
-               // And update the maximum file descriptor
-               maxfds = std::max(maxfds, clientSock) ;
+				   // And update the maximum file descriptor
+				   maxfds = std::max(maxfds, clientSock) ;
 
-               // create a new client to store information.
-               clients[clientSock] = new Client(clientSock);
+				   // create a new client to store information.
+				   clients[clientSock] = new Client(clientSock);
 
-               // Decrement the number of sockets waiting to be dealt with
-               n--;
+				   // Decrement the number of sockets waiting to be dealt with
+				   n--;
 
-               printf("Client connected on server: %d\n", clientSock);
-               log_lister(clientSock, "Client connected to server");
-
+				   printf("Client connected on server: %d\n", clientSock);
+				   log_lister(clientSock, "Client connected to server");
+			   }
             }
             // Now check for commands from clients
             std::list<Client *> disconnectedClients;
@@ -1160,6 +1203,7 @@ int main(int argc, char* argv[])
                       ssize_t message_len = recv(client->sock, buffer, sizeof(buffer), MSG_DONTWAIT);
                       if( message_len == 0)
                       {
+						  printf("Client closed connection: %d\n", client->sock);
                             log_lister(client->sock, "client disconnected.");
                             disconnectedClients.push_back(client);
                             closeClient(client->sock);
