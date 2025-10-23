@@ -138,19 +138,20 @@ void log_lister(int clientSocket, const std::string& message)
 
     // output í *.log
     std::ofstream log(filename, std::ios::app); 
+    auto it = clients.find(clientSocket);
     if (clientSocket <= 0)
     {
 		log << "[" << time_buffer << "] " << " Not from a server or client connection, probably error connecting: " << message << std::endl;
 	}
-    else if (log.is_open())
-    {
-		if (clients[clientSocket]->name != ""){
-			log << "[" << time_buffer << "] " << clients[clientSocket]->name << " " << message << std::endl;
-		}
-		else{
-			log << "[" << time_buffer << "] " << " from socket whose name has not been set" << " " << message << std::endl;
-		}
-    }
+    else if (clients.count(clientSocket) > 0){ 
+		if (it != clients.end() && it->second && !it->second->name.empty()) { 
+			log << "[" << time_buffer << "] " << it->second->name << " " << message << "\n"; 
+		} 
+		else {
+			log << "[" << time_buffer << "] " << "(socket " << clientSocket << ") " << message << "\n"; 
+		} 
+	}
+	else{ log << "[" << time_buffer << "] " << "(no-socket) " << message << "\n"; }
 
 }
 
@@ -693,6 +694,9 @@ void serverCommand(int serverSocket,
 			// Get the group ID of the server for whom the message is
 			size_t comma = command.find(',');
 			std::string server_name = command.substr(comma + 1);
+			if (server_name == "A5_23"){
+				
+			}
 			
 			log_lister(serverSocket, "sent " + command);
             // Check if group has any mail in their message box
@@ -774,6 +778,8 @@ void serverCommand(int serverSocket,
 			   std::cout << "Inside while loop, tmp: " << tmp << std::endl;
 			   parts.push_back(tmp);
 		   }
+		   
+		   if (parts.empty()) return;
 		   
 		   // Add name
 		   std::string server_name;
@@ -913,6 +919,8 @@ void serverCommand(int serverSocket,
 void clientCommand(int clientSocket,  
                   char *buffer, size_t message_len, std::list<Client *> *disconnectedClients) 
 {
+	auto cit = clients.find(clientSocket);
+	if (cit == clients.end() || !cit->second) return;  // socket already gone
 	// Make sure there is nothing left from this socket from before
   if (clients[clientSocket]->client_buffer[0] != 0){
 	  // see if there are leftover messages in the buffer. if so we need to finish those before addressing new ones
@@ -928,7 +936,9 @@ void clientCommand(int clientSocket,
   }
   
   // If the first byte is SOH then the client is a server
-  if (buffer[0] == '\x01' || clients[clientSocket]->name[0] == 'A' || clients[clientSocket]->name[0] == 'I'){
+  std::string& nm = clients[clientSocket]->name;
+  char first = (!nm.empty() ? nm[0] : '\0');
+  if (buffer[0] == '\x01' || first == 'A' || first == 'I'){
 	  log_lister(clientSocket, "first byte is correct <SOH>, got into servermessage");
 	  serverCommand(clientSocket, buffer, message_len, disconnectedClients);
 	  return;
@@ -953,7 +963,7 @@ void clientCommand(int clientSocket,
         if (second_comma != std::string::npos) 
         {
             // Get sender group id (assumes the NAME command used groups id)
-            std::string senderGroupID = clients[clientSocket]->name;
+            std::string senderGroupID = "A5_23";
 
             // Extract the group id, between the first and second comma
             std::string resieverGroupID = line.substr(first_comma + 1, second_comma - (first_comma + 1));
@@ -1203,7 +1213,6 @@ int main(int argc, char* argv[])
 				if (servers.size() >= 7 && instructors.size() < 1)
 				{
 					close(clientSock);
-					n--;
 					std::cout << "Denied socket as we are full" << std::endl;
 					log_lister(0, "Denied socket as we are full");
 				}
@@ -1219,12 +1228,11 @@ int main(int argc, char* argv[])
 				   // create a new client to store information.
 				   clients[clientSock] = new Client(clientSock);
 
-				   // Decrement the number of sockets waiting to be dealt with
-				   n--;
-
 				   printf("Client connected on server: %d\n", clientSock);
 				   log_lister(clientSock, "Client connected to server");
 			   }
+			   // Decrement the number of sockets waiting to be dealt with
+			   n--;
             }
             // Now check for commands from clients
             std::list<Client *> disconnectedClients;
