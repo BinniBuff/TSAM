@@ -536,8 +536,11 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 	}
 	
 	// Use for-loop to iterate through all messages
-	for (int i = 1; i < messages.size(); i++)
-    {
+	for (int i = 1; i < messages.size(); i++){
+		if (messages[i].size() < 4)
+		{
+			log_lister(serverSocket, "Sent too short of a message");
+			continue;
 		}
 		u_int16_t len = (u_int8_t)messages[i][0] << 8 | (u_int8_t)messages[i][1];
 		if (messages[i][2] != '\x02')
@@ -891,11 +894,15 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 	auto cit = clients.find(clientSocket);
 	if (cit == clients.end() || !cit->second) return;  // socket already gone
 	// Make sure there is nothing left from this socket from before
-        
-        line += std::string(buffer);
-        serverCommand(clientSocket, line.c_str(), message_len, disconnectedClients);
-        return;
-    }
+  if (clients[clientSocket]->client_buffer[0] != 0){
+	  // see if there are leftover messages in the buffer. if so we need to finish those before addressing new ones
+	  std::string line(clients[clientSocket]->client_buffer);
+	  // empty the client_buffer by creating a new one
+	  memset(clients[clientSocket]->client_buffer, 0, sizeof(clients[clientSocket]->client_buffer));
+	  
+	  log_lister(clientSocket, "sent a message that got split and we have gotten the first part from the client and added to the second part just received");
+	  
+	  line.append(buffer, message_len);
 	  serverCommand(clientSocket, line.c_str(), message_len, disconnectedClients);
 	  return;
   }
@@ -1243,6 +1250,28 @@ int main(int argc, char* argv[])
                         log_lister(s->sock, "Sent HELO to " + s->name + " - " + s->IP + ":" + s->port);
 				    }
                 }
+                if (!messageQueues.empty() && !servers.empty())
+                {
+					std::random_device rd;
+					std::mt19937 gen(rd());
+					std::uniform_int_distribution<> distrib(0, servers.size() - 1);
+
+					int randomIndex = distrib(gen);
+					
+					auto it = servers.begin();
+					std::advance(it, randomIndex);
+					
+					std::uniform_int_distribution<> rec_distrib(0, messageQueues.size() - 1);
+
+					int randomIndexReceiver = rec_distrib(gen);
+					
+					auto rec_it = messageQueues.begin();
+					std::advance(rec_it, randomIndex);
+					
+					std::string receiver = rec_it->first;
+					int random_server = it->second->sock;
+					sendMsg(random_server, receiver.c_str());
+				}
             }
         }
     }
