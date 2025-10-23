@@ -485,6 +485,10 @@ void sendMsg(int serverSocket, const char *to_name){
 		std::string body = message.body;
 		message_to_send += from_group + ",";
 		message_to_send += body;
+		if (message_to_send.find('\04') != std::string::npos){
+			if (message_to_send[message_to_send.length() - 1] == '\04') message_to_send += "A5_23";
+			else message_to_send += ",A5_23";
+		}
 		
 		// Send packet to the server.
 		uint16_t total_length = 5 + message_to_send.length();   // Calculate the lenght
@@ -514,6 +518,7 @@ void recvMsg(int serverSocket, const char *buffer){
 	size_t first_comma = line.find(',');
 	size_t second_comma = line.find(',', first_comma + 1);
 	size_t third_comma = line.find(',', second_comma + 1);
+	log_lister(serverSocket, "sent " + line);
 
 	// Ensure both commas were found
 	if (third_comma != std::string::npos) 
@@ -528,9 +533,9 @@ void recvMsg(int serverSocket, const char *buffer){
 		messageQueues[toGroupID].push_back(newMessage);
 		
 		// Viljum við senda beint ef message'ið er til einhvers sem við erum tengdir?
+		if (toGroupID == "A5_23") return;
 		if (servers.count(toGroupID)) sendMsg(servers[toGroupID]->sock, toGroupID.c_str());
 	}
-	log_lister(serverSocket, "sent " + line);
 }
 
 void outGoingStatusReq()
@@ -694,13 +699,30 @@ void serverCommand(int serverSocket,
 			// Get the group ID of the server for whom the message is
 			size_t comma = command.find(',');
 			std::string server_name = command.substr(comma + 1);
-			if (server_name == "A5_23"){
-				
-			}
 			
 			log_lister(serverSocket, "sent " + command);
-            // Check if group has any mail in their message box
-            if (!server_name.empty() && messageQueues.count(server_name) && !messageQueues[server_name].empty())
+			
+			if (server_name == "A5_23"){
+				std::string error_message = "ERROR: STOP TRYING TO STEAL MY MAIL!";
+				uint16_t total_length = 5 + error_message.length();   // Calculate the lenght
+				uint16_t network_length = htons(total_length);  // In network byte order
+				
+				log_lister(serverSocket, "received from our server: " + error_message);
+
+				// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
+				char packet[total_length];
+				packet[0] = 0x01; // SOH
+				memcpy(packet + 1, &network_length, 2);
+				packet[3] = 0x02; // STX
+				memcpy(packet + 4, error_message.c_str(), error_message.length());
+				packet[total_length - 1] = 0x03; // ETX
+
+				// Send packet
+				send(serverSocket, packet, total_length, 0);
+				std::cout << "We sent " << error_message << std::endl;
+				continue;
+			}
+            else if(!server_name.empty() && messageQueues.count(server_name) && !messageQueues[server_name].empty()) // Check if group has any mail in their message box
             {
                 sendMsg(serverSocket, server_name.c_str());
             }
@@ -850,7 +872,7 @@ void serverCommand(int serverSocket,
 			   std::string new_name = nested_parts[0];
 			   std::string new_IP = nested_parts[1];
 			   std::string new_port = nested_parts[2];
-			   if (new_IP == myIP && new_port == myPort) continue;
+			   if (new_name == myIP && new_port == myPort) continue;
 			   if (servers.count(new_name) == 0) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
 			   std::cout << "end of connect for loop" << std::endl;
 			   /*std::cout << "Connected servers: " << std::endl;
@@ -911,6 +933,11 @@ void serverCommand(int serverSocket,
                 }
             }
         }
+        else
+        {
+			std::cout << "Unknown command from: " << clients[serverSocket]->name << std::endl;
+			log_lister(serverSocket, " has sent an unknown command");
+		}
 	}
 }
 
@@ -943,7 +970,8 @@ void clientCommand(int clientSocket,
 	  serverCommand(clientSocket, buffer, message_len, disconnectedClients);
 	  return;
   }
-  std::string line(buffer);
+  // std::string line(buffer);  // Merge change
+    std::string line(buffer, message_len);
   
     size_t end = line.find_last_not_of(" \n\r\t");
 
@@ -970,6 +998,7 @@ void clientCommand(int clientSocket,
 
             // Extract the message, everything after the second comma
             std::string msg_body = line.substr(second_comma + 1);
+            msg_body += 0x04;
 
             // Create a new Message object
             Message newMessage(senderGroupID, msg_body);
@@ -977,17 +1006,21 @@ void clientCommand(int clientSocket,
             // Add the message to the recievers message queue
             messageQueues[resieverGroupID].push_back(newMessage);
 
+            if (servers.count(resieverGroupID))
+            {
+                log_lister(clientSocket, "Recipient is a connected peer. Forwarding message...");
+
+                // Call helper function to send the message to the peer
+                // The peers socket is stored in the servers map
+                sendMsg(servers[resieverGroupID]->sock, resieverGroupID.c_str());
+            }
+
             // Log the event
             log_lister(clientSocket, "Queued message from " + senderGroupID + " to " + resieverGroupID);
 
             // Send an acknowledgment back
             std::string ack = "Message for " + resieverGroupID + " has been queued.\n";
             send(clientSocket, ack.c_str(), ack.length(), 0);
-            
-            std::cout << "We sent " << ack << std::endl;
-            
-            // TODO: 
-            // If we are connected to the server we are sending to, send to them, else send to random
         }
     }
         // Check for GETMSG command
@@ -996,14 +1029,14 @@ void clientCommand(int clientSocket,
 
             // Get the group ID of the client asking for a message
             // (Assumes the client has used "CONNECT <groupID>" beforehand)
-            std::string clientGroupID = clients[clientSocket]->name;
+            std::string clientGroupID = "A5_23";
             // Check if group has any mail in their message box
             if (!clientGroupID.empty() && messageQueues.count(clientGroupID) && !messageQueues[clientGroupID].empty())
             {
 				// Missing headers
 				
                 // Get the oldest message from the front of the queue
-                Message oldestMessage = messageQueues["A5_23"].front();
+                Message oldestMessage = messageQueues[clientGroupID].front();
 
                 // Format message
                 std::string formatted_message = "FROM " + oldestMessage.from + ": " + oldestMessage.body + "\n";
@@ -1012,7 +1045,7 @@ void clientCommand(int clientSocket,
                 send(clientSocket, formatted_message.c_str(), formatted_message.length(), 0);
 
                 // Remove the message from the queue since it's been delivered
-                messageQueues["A5_23"].pop_front();
+                messageQueues[clientGroupID].pop_front();
 
                 // Log event
                 log_lister(clientSocket, "Delivered message from " + oldestMessage.from);
@@ -1031,24 +1064,21 @@ void clientCommand(int clientSocket,
         // The server is not connected  to other servers as is
         else if (line == "LISTSERVERS") 
         {
-            std::cout << "Command: LISTSERVERS" << std::endl;
+            std::string server_list_msg = "Connected peer servers:\n";
 
-            std::string client_list_msg = "Connected clients:\n";
-            if (clients.empty())
+            if (servers.empty())
             {
-                client_list_msg = "No clients connected.\n";
+                server_list_msg = "Not connected to any other servers.\n";
             }
             else
             {
-                for (auto const& pair : clients)
+                for (auto const& pair : servers)
                 {
-                    Client* client = pair.second;
-                    // Assuming client->name stores the group id from a "CONNECT" command
-                    // Might want to remove the socket part, but it will stay for now
-                    client_list_msg += "  - Group: " + client->name + " (Socket: " + std::to_string(client->sock) + ")\n";
+                    Server* server = pair.second;
+                    server_list_msg += "  - Group: " + server->name + " (IP: " + server->IP + ", Port: " + server->port + ")\n";
                 }
             }
-            send(clientSocket, client_list_msg.c_str(), client_list_msg.length(), 0);
+            send(clientSocket, server_list_msg.c_str(), server_list_msg.length(), 0);
         }
         // Set myIP so we don't connect to our machine
         // MY_IP,<IP number>,<Socket number>

@@ -63,7 +63,7 @@ Under usage you will see how you compile the files and how to use the machine co
 
     ```bash -$ ./tsamgroupid23 <portNr>```
 
-    (The successfull output will look like this.)
+    (The successfull example output will look like this.)
     Listening on port: <portNr>
     accept***
     Client connected on server: 4
@@ -89,7 +89,7 @@ Under usage you will see how you compile the files and how to use the machine co
 
     ```bash -$ ./client <ipNr> <portNr>```
 
-    (The successfull output will look like this.)
+    (The successfull example output will look like this.)
     Over and out 
     Eample of command usage:
         ./client <redacted> 4023
@@ -135,12 +135,14 @@ Under usage you will see how you compile the files and how to use the machine co
 
     3. To connect to our server:
         Our server IP and port is 100.85.220.16,4023.
-        
+        - The server will be running so to connect your client to our server do the following.
+            1. After compiling run the client and use our ip and port: 
+            ~$ ./client 100.85.220.16 4023.
 
-        Run: 
+        Use of commands: 
         - MY_IP,<your ip>,<your port>
         - CONNECT,130.208.246.98,5001,Instr_1
-        - SENDMSG,A5_23,<your groupid>,"The message for our server!!"
+        - SENDMSG,<some groupid>,"The message!"
 
 
 # WIRESHARK
@@ -160,15 +162,10 @@ In the folder you can see there is a file called client-server-trace.pcapng, the
 # EXPECTED POINTS:
 
 ## EXPECTATION:
-    We expect to get 40 points for implementing the client and server communicaiton, that is requiremnet, (A5.pdf, 1a).
-    We expect to get 10 points for the WIRESHARK trace, showing the communication between server and client, (A5.pdf, 1b).
-    We expect to get 10 bonus points for submiting 1a and 1b early, (A5.pdf, 2a).
+    We expect to get 20 extra points for setting up a home server
+    We expect to get
 
-## WORK IN PROCESS:
-    We are working on setting up a home public server for extra 20 points (A5.pdf, External bot 2f). We have set up the computer and booted a new OS (Linux Ubuntu).
-    What we have left is to set up the DMZ which will be started on tonight 3.10.2025.
-    Then we will set up tunnels for all members to be able to work on the server externaly.
-    Later on we will find more bonus points to complete.
+
 
 
 
