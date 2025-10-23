@@ -485,6 +485,10 @@ void sendMsg(int serverSocket, const char *to_name){
 		std::string body = message.body;
 		message_to_send += from_group + ",";
 		message_to_send += body;
+		if (message_to_send.find('\04') != std::string::npos){
+			if (message_to_send[message_to_send.length() - 1] == '\04') message_to_send += "A5_23";
+			else message_to_send += ",A5_23";
+		}
 		
 		// Send packet to the server.
 		uint16_t total_length = 5 + message_to_send.length();   // Calculate the lenght
@@ -514,6 +518,7 @@ void recvMsg(int serverSocket, const char *buffer){
 	size_t first_comma = line.find(',');
 	size_t second_comma = line.find(',', first_comma + 1);
 	size_t third_comma = line.find(',', second_comma + 1);
+	log_lister(serverSocket, "sent " + line);
 
 	// Ensure both commas were found
 	if (third_comma != std::string::npos) 
@@ -528,9 +533,9 @@ void recvMsg(int serverSocket, const char *buffer){
 		messageQueues[toGroupID].push_back(newMessage);
 		
 		// Viljum við senda beint ef message'ið er til einhvers sem við erum tengdir?
+		if (toGroupID == "A5_23") return;
 		if (servers.count(toGroupID)) sendMsg(servers[toGroupID]->sock, toGroupID.c_str());
 	}
-	log_lister(serverSocket, "sent " + line);
 }
 
 void outGoingStatusReq()
@@ -702,7 +707,7 @@ void serverCommand(int serverSocket,
 				uint16_t total_length = 5 + error_message.length();   // Calculate the lenght
 				uint16_t network_length = htons(total_length);  // In network byte order
 				
-				log_lister(serverSocket, "received from our server: " + response);
+				log_lister(serverSocket, "received from our server: " + error_message);
 
 				// Assemlbing packet in (<SOH><length><STX><command><ETX>) format
 				char packet[total_length];
@@ -988,6 +993,7 @@ void clientCommand(int clientSocket,
 
             // Extract the message, everything after the second comma
             std::string msg_body = line.substr(second_comma + 1);
+            msg_body += 0x04;
 
             // Create a new Message object
             Message newMessage(senderGroupID, msg_body);
@@ -1068,7 +1074,6 @@ void clientCommand(int clientSocket,
                 }
             }
             send(clientSocket, server_list_msg.c_str(), server_list_msg.length(), 0);
-        }
         }
         // Set myIP so we don't connect to our machine
         // MY_IP,<IP number>,<Socket number>
