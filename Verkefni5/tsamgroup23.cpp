@@ -821,7 +821,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 			   std::string new_name = nested_parts[0];
 			   std::string new_IP = nested_parts[1];
 			   std::string new_port = nested_parts[2];
-			   if (new_name == myIP && new_port == myPort) continue;
+			   if (new_name == "A5_23") continue;
 			   if (servers.count(new_name) == 0) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
 			   std::cout << "end of connect for loop" << std::endl;
 
