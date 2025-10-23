@@ -30,7 +30,8 @@
 #include <fstream>
 #include <ctime>
 #include <string>
-
+#include <random>
+#include <iterator>
 
 // fix SOCK_NONBLOCK for OSX
 #ifndef SOCK_NONBLOCK
@@ -297,8 +298,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    
    int int_port = atoi(port);
    
-   if (int_port < 1 || int_port > 10000)
-   {
+   if (int_port < 4000 || int_port > 5010){
 	   std::cout << "Port not valid" << std::endl;
 	   log_lister(0, "Port not valid when connecting to " + std::string(IP) + " " + std::string(port));
 	   return;
@@ -444,8 +444,8 @@ void sendMsg(int serverSocket, const char *to_name)
 
 		// Remove the message from the queue since it's been delivered
 		messageQueues[serverGroupID].pop_front();
-		log_lister(serverSocket, "Received SENDMSG from our server");
-		std::cout << "We sent " << message_to_send << std::endl;
+		log_lister(serverSocket, "Received SENDMSG from our server: " + message_to_send);
+		std::cout << "We sent " << message_to_send << " to: " << clients[serverSocket]->name << std::endl;
 	}
 }
 
@@ -538,6 +538,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 	// Use for-loop to iterate through all messages
 	for (int i = 1; i < messages.size(); i++)
     {
+		}
 		u_int16_t len = (u_int8_t)messages[i][0] << 8 | (u_int8_t)messages[i][1];
 		if (messages[i][2] != '\x02')
         {
@@ -890,18 +891,14 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 	auto cit = clients.find(clientSocket);
 	if (cit == clients.end() || !cit->second) return;  // socket already gone
 	// Make sure there is nothing left from this socket from before
-    if (clients[clientSocket]->client_buffer[0] != 0){
-        // see if there are leftover messages in the buffer. if so we need to finish those before addressing new ones
-        std::string line(clients[clientSocket]->client_buffer);
-        // empty the client_buffer by creating a new one
-        memset(clients[clientSocket]->client_buffer, 0, sizeof(clients[clientSocket]->client_buffer));
-        
-        log_lister(clientSocket, "sent a message that got split and we have gotten the first part from the client and added to the second part just received");
         
         line += std::string(buffer);
         serverCommand(clientSocket, line.c_str(), message_len, disconnectedClients);
         return;
     }
+	  serverCommand(clientSocket, line.c_str(), message_len, disconnectedClients);
+	  return;
+  }
   
     // If the first byte is SOH then the client is a server
     std::string& nm = clients[clientSocket]->name;
@@ -1219,7 +1216,7 @@ int main(int argc, char* argv[])
                       }
                       // We don't check for -1 (nothing received) because select()
                       // only triggers if there is something on the socket for us.
-                      else
+                      else if (message_len > 0)
                       {
                             clientCommand(client->sock, buffer, (size_t)message_len, &disconnectedClients);
                             log_lister(client->sock, "Recived data: " + std::string(buffer));
