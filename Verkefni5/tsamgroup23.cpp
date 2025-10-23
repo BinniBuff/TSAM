@@ -278,7 +278,7 @@ void closeClient(int clientSocket)
 
 void sentHelo(int serverSocket, std::string const& myGroup){
 
-   std::string helo = myGroup;
+   std::string helo = "HELO," + myGroup;
    uint16_t total_length = 5 + helo.length();
    uint16_t network_length = htons(total_length);
 
@@ -295,6 +295,7 @@ void sentHelo(int serverSocket, std::string const& myGroup){
    {
 	   perror("send() to server failed: ");
 	   log_lister(serverSocket, "Send() HELO failed");
+	   return;
    }
    
    log_lister(serverSocket, "Sent HELO: " + helo);
@@ -334,6 +335,7 @@ void connectServer(const char *IP, const char *port, const char *name)
        log_lister(0, "getaddrinfo failed when connecting to " + std::string(IP) + " " + std::string(port));
        return;
    }
+   
 
    struct hostent *server;
    server = gethostbyname(IP);
@@ -431,6 +433,8 @@ void connectServer(const char *IP, const char *port, const char *name)
 	       }
 	   }
    }
+   
+   sentHelo(serverSocket, "A5_23");
 }
 
 void getMsgs(int serverSocket, const char* group_id){
@@ -650,61 +654,15 @@ void serverCommand(int serverSocket,
 					closeClient(instructor->sock);
 					removeServerBySocket(instructor->sock);
 				}
-				struct sockaddr_in server_addr;
-				socklen_t server_len = sizeof(server_addr);
-				char server_ip[INET_ADDRSTRLEN];
-				int server_port;
-
-				if (getpeername(serverSocket, (struct sockaddr *)&server_addr, &server_len) == -1) {
-					perror("Error getting server IP and port");
-					disconnectedClients->push_back(clients[serverSocket]);
-					closeClient(serverSocket);
-					removeServerBySocket(serverSocket);
-					return;
-				}
-				else {
-					inet_ntop(AF_INET, &(server_addr.sin_addr), server_ip, INET_ADDRSTRLEN);
-					server_port = ntohs(server_addr.sin_port);
-				}
-				
-				// Add name
-				servers[server_name] = new Server(serverSocket);
-				servers[server_name]->name = server_name;
-				servers[server_name]->IP = std::string(server_ip);
-				servers[server_name]->port = std::to_string(server_port);
 				clients[serverSocket]->name = server_name;
-				
-				if (std::count(std::begin(last_five), std::end(last_five), servers[server_name]) == 0){
-					auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
-					if (it == std::end(last_five)){
-					   for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
-					   last_five[4] = servers[server_name];
-					}
-					else{
-						*it = servers[server_name];
-					}
-				}
-				
-				// Add server to instructor list if it is an instructor server
-				if (server_name[0] == 'I'){
-					instructors[serverSocket] = clients[serverSocket];
-					if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[server_name]) == 0){
-						auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
-						if (it == std::end(last_instructors)){
-						   for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
-						   last_instructors[2] = servers[server_name];
-						}
-						else{
-							*it = servers[server_name];
-						}
-					}
-				}
+				sentHelo(serverSocket, "A5_23");
 			}
 			
 			log_lister(serverSocket, "sent " + command);
 			
 			// Send back SERVERS
 			std::string response = "SERVERS,";
+			response += "A5_23," + myIP + "," + myPort + ";";
 			for (auto const& pair : servers){
 				Server *tmp = pair.second;
 				response += tmp->name + ",";
@@ -815,8 +773,59 @@ void serverCommand(int serverSocket,
 			   std::cout << "Inside while loop, tmp: " << tmp << std::endl;
 			   parts.push_back(tmp);
 		   }
+		   
+		   // Add name
+		   std::string server_name;
+		   std::string server_ip;
+		   std::string server_port;
+		   std::stringstream this_server(parts[0]);
+		   std::vector<std::string> this_server_split;
+		   while (std::getline(this_server, tmp, ',')){
+			   std::cout << "Inside while loop for this server, tmp: " << tmp << std::endl;
+			   this_server_split.push_back(tmp);
+		   }
+		   
+		   std::cout << "This server name: " << this_server_split[0] << ", this server IP: " << this_server_split[1] << ", this server port:" << this_server_split[2] << std::endl;
+		   
+		   server_name = this_server_split[0];
+		   if ((this_server_split.size() == 3) && (servers.count(server_name) == 0)) {
+			    server_ip = this_server_split[1];
+			    server_port = this_server_split[2];
+			    servers[server_name] = new Server(serverSocket);
+				servers[server_name]->name = server_name;
+				servers[server_name]->IP = server_ip;
+				servers[server_name]->port = server_port;
+				clients[serverSocket]->name = server_name;
+				
+				if (std::count(std::begin(last_five), std::end(last_five), servers[server_name]) == 0){
+					auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
+					if (it == std::end(last_five)){
+					   for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
+					   last_five[4] = servers[server_name];
+					}
+					else{
+						*it = servers[server_name];
+					}
+				}
+				
+				// Add server to instructor list if it is an instructor server
+				if (server_name[0] == 'I'){
+					instructors[serverSocket] = clients[serverSocket];
+					if (std::count(std::begin(last_instructors), std::end(last_instructors), servers[server_name]) == 0){
+						auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
+						if (it == std::end(last_instructors)){
+						   for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
+						   last_instructors[2] = servers[server_name];
+						}
+						else{
+							*it = servers[server_name];
+						}
+					}
+				}
+		   }
+		
 		   // Do a DFS for other servers through this one
-		   for (int i = 0; i < parts.size(); i ++){
+		   for (int i = 1; i < parts.size(); i ++){
 			   if (servers.size() >= 7){
 				   return;
 			   }
@@ -840,7 +849,7 @@ void serverCommand(int serverSocket,
 			   std::cout << "Connected servers: " << std::endl;
 				for (auto const& srvrs : servers)
 				{
-					std::cout << " - " << srvrs.second->sock << ":" << srvrs.second->name << std::endl;
+					std::cout << " - " << srvrs.second->sock << ":" << srvrs.second->name << " - " << srvrs.second->IP << ":" << srvrs.second->port << std::endl;
 				}
 		   }
 		   std::cout << "after connect for loop" << std::endl;
