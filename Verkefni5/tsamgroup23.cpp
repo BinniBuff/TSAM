@@ -943,7 +943,8 @@ void clientCommand(int clientSocket,
 	  serverCommand(clientSocket, buffer, message_len, disconnectedClients);
 	  return;
   }
-  std::string line(buffer);
+  // std::string line(buffer);  // Merge change
+    std::string line(buffer, message_len);
   
     size_t end = line.find_last_not_of(" \n\r\t");
 
@@ -977,17 +978,21 @@ void clientCommand(int clientSocket,
             // Add the message to the recievers message queue
             messageQueues[resieverGroupID].push_back(newMessage);
 
+            if (servers.count(resieverGroupID))
+            {
+                log_lister(clientSocket, "Recipient is a connected peer. Forwarding message...");
+
+                // Call helper function to send the message to the peer
+                // The peers socket is stored in the servers map
+                sendMsg(servers[resieverGroupID]->sock, resieverGroupID.c_str());
+            }
+
             // Log the event
             log_lister(clientSocket, "Queued message from " + senderGroupID + " to " + resieverGroupID);
 
             // Send an acknowledgment back
             std::string ack = "Message for " + resieverGroupID + " has been queued.\n";
             send(clientSocket, ack.c_str(), ack.length(), 0);
-            
-            std::cout << "We sent " << ack << std::endl;
-            
-            // TODO: 
-            // If we are connected to the server we are sending to, send to them, else send to random
         }
     }
         // Check for GETMSG command
@@ -1031,24 +1036,22 @@ void clientCommand(int clientSocket,
         // The server is not connected  to other servers as is
         else if (line == "LISTSERVERS") 
         {
-            std::cout << "Command: LISTSERVERS" << std::endl;
+            std::string server_list_msg = "Connected peer servers:\n";
 
-            std::string client_list_msg = "Connected clients:\n";
-            if (clients.empty())
+            if (servers.empty())
             {
-                client_list_msg = "No clients connected.\n";
+                server_list_msg = "Not connected to any other servers.\n";
             }
             else
             {
-                for (auto const& pair : clients)
+                for (auto const& pair : servers)
                 {
-                    Client* client = pair.second;
-                    // Assuming client->name stores the group id from a "CONNECT" command
-                    // Might want to remove the socket part, but it will stay for now
-                    client_list_msg += "  - Group: " + client->name + " (Socket: " + std::to_string(client->sock) + ")\n";
+                    Server* server = pair.second;
+                    server_list_msg += "  - Group: " + server->name + " (IP: " + server->IP + ", Port: " + server->port + ")\n";
                 }
             }
-            send(clientSocket, client_list_msg.c_str(), client_list_msg.length(), 0);
+            send(clientSocket, server_list_msg.c_str(), server_list_msg.length(), 0);
+        }
         }
         // Set myIP so we don't connect to our machine
         // MY_IP,<IP number>,<Socket number>
