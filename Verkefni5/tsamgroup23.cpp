@@ -50,7 +50,7 @@ class Client
   public:
     int sock;              // socket of client connection
     std::string name;           // Limit length of name of client's user
-    char client_buffer[5000];           // Buffer for clients if stream sends more than one message
+    char client_buffer[5005];           // Buffer for clients if stream sends more than one message
 
     Client(int socket) : sock(socket)
     {
@@ -162,7 +162,7 @@ void removeServerBySocket(int sock)
         else{ ++it;}
     }
 	
-	log_lister(clientSocket, "Server disconnected");
+	log_lister(sock, "Server disconnected");
 }
 
 int open_socket(int portno)
@@ -278,8 +278,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    int serverSocket; // Socket used for server 
    int nwrite; // No. bytes written to server
    int nread; // Bytes read from socket
-   char buffer[5000]; // buffer for writing to server
-   char in_buffer[5000]; // buffer for receiving from server
+   char buffer[5005]; // buffer for writing to server
    int set = 1; // Toggle for setsockopt
 
    hints.ai_family   = AF_INET; // IPv4 only addresses
@@ -510,7 +509,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 	std::string tmp;
 	std::vector<std::string> messages;
 	
-	log_lister(clientSocket, "sent: " + all_messages);
+	log_lister(serverSocket, "sent (all messages): " + all_messages);
 
 	std::stringstream ss(all_messages);
 
@@ -569,7 +568,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 		size_t payload_len = (etx > 3) ? (etx - 3) : 0;
 		std::string command = messages[i].substr(3, payload_len);
 		
-        log_lister(serverSocket, "sent " + command);
+        log_lister(serverSocket, "sent command: " + command);
 		
 		// Commands
 		if (command.rfind("HELO", 0) == 0)
@@ -855,8 +854,13 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 {
 	auto cit = clients.find(clientSocket);
 	if (cit == clients.end() || !cit->second) return;  // socket already gone
+  
+    // If the first byte is SOH then the client is a server
+    std::string& nm = clients[clientSocket]->name;
+    char first = (!nm.empty() ? nm[0] : '\0');
+    
 	// Make sure there is nothing left from this socket from before
-    if (clients[clientSocket]->client_buffer[0] != 0){
+    if (clients[clientSocket]->client_buffer[4] != 0){
         // see if there are leftover messages in the buffer. if so we need to finish those before addressing new ones
         std::string line(clients[clientSocket]->client_buffer);
         // empty the client_buffer by creating a new one
@@ -868,11 +872,7 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
         serverCommand(clientSocket, line.c_str(), message_len, disconnectedClients);
         return;
     }
-  
-    // If the first byte is SOH then the client is a server
-    std::string& nm = clients[clientSocket]->name;
-    char first = (!nm.empty() ? nm[0] : '\0');
-    if (buffer[0] == '\x01' || first == 'A' || first == 'I')
+    else if (buffer[0] == '\x01' || first == 'A' || first == 'I')
     {
 	    serverCommand(clientSocket, buffer, message_len, disconnectedClients);
 	    return;
@@ -1054,7 +1054,7 @@ void keepAlive()
 
         std::string command_str = "KEEPALIVE," + std::to_string(message_count);
 		
-		log_lister(clientSocket, "Received: " + command_str);
+		log_lister(server->sock, "Received: " + command_str);
 
         uint16_t total_length = 5 + command_str.length();   // Calculate the lenght
         uint16_t network_length = htons(total_length);  // In network byte order
@@ -1082,7 +1082,7 @@ int main(int argc, char* argv[])
     fd_set exceptSockets; // Exception socket list
     struct sockaddr_in client;
     socklen_t clientLen;
-    char buffer[5000]; // buffer for reading from clients
+    char buffer[5005]; // buffer for reading from clients
     time_t lastKeepAliveTime = 0;  // Timer to make sure keepAlive does not run more than once a minute
 
     if(argc != 2)
