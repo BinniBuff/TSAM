@@ -131,24 +131,12 @@ void log_lister(int clientSocket, const std::string& message)
     // Output
     std::ofstream log(filename, std::ios::app); 
     auto it = clients.find(clientSocket);
-    if (clientSocket <= 0)
-    {
-		log << "[" << time_buffer << "] " << " Not from a server or client connection, probably error connecting: " << message << std::endl;
+    if (it != clients.end() && it->second && !it->second->name.empty()) { 
+		log << "[" << time_buffer << "] " << it->second->name << " " << message << "\n"; 
+	} 
+	else {
+		log << "[" << time_buffer << "] " << "(No-name socket " << clientSocket << ") " << message << "\n"; 
 	}
-    else if (clients.count(clientSocket) > 0)
-    { 
-		if (it != clients.end() && it->second && !it->second->name.empty())
-        { 
-			log << "[" << time_buffer << "] " << it->second->name << " " << message << "\n"; 
-		} 
-		else {
-			log << "[" << time_buffer << "] " << "(socket " << clientSocket << ") " << message << "\n"; 
-		} 
-	}
-	else{
-        log << "[" << time_buffer << "] " << "(no-socket) " << message << "\n";
-    }
-
 }
 
 void removeServerBySocket(int sock)
@@ -173,6 +161,8 @@ void removeServerBySocket(int sock)
         }
         else{ ++it;}
     }
+	
+	log_lister(clientSocket, "Server disconnected");
 }
 
 int open_socket(int portno)
@@ -238,7 +228,7 @@ int open_socket(int portno)
 
 void closeClient(int clientSocket)
 {
-    log_lister(clientSocket, "Client closed connection");
+    log_lister(clientSocket, "Connection closed");
 
     close(clientSocket);      
 
@@ -277,7 +267,7 @@ void sentHelo(int serverSocket, std::string const& myGroup)
 	   return;
    }
    
-   log_lister(serverSocket, "Sent HELO: " + helo);
+   log_lister(serverSocket, "Received HELO: " + helo);
 
 }
 
@@ -297,7 +287,7 @@ void connectServer(const char *IP, const char *port, const char *name)
    
    int int_port = atoi(port);
    
-   if (int_port < 1 || int_port > 10000)
+   if (int_port < 4000 || int_port > 5010)
    {
 	   log_lister(0, "Port not valid when connecting to " + std::string(IP) + " " + std::string(port));
 	   return;
@@ -447,7 +437,7 @@ void recvMsg(int serverSocket, const char *buffer)
 	size_t first_comma = line.find(',');
 	size_t second_comma = line.find(',', first_comma + 1);
 	size_t third_comma = line.find(',', second_comma + 1);
-	log_lister(serverSocket, "sent " + line);
+	log_lister(serverSocket, "sent message: " + line);
 
 	// Ensure both commas were found
 	if (third_comma != std::string::npos) 
@@ -490,7 +480,7 @@ void outGoingStatusReq()
         // Send the request.
         send(server->sock, packet, total_length, 0);
         // Logit
-        log_lister(server->sock, "Sent STATUSREQ to " + server->name);
+        log_lister(server->sock, "Received STATUSREQ");
     }
 }
 
@@ -519,6 +509,8 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 	std::string all_messages = stream.substr(start);
 	std::string tmp;
 	std::vector<std::string> messages;
+	
+	log_lister(clientSocket, "sent: " + all_messages);
 
 	std::stringstream ss(all_messages);
 
@@ -577,6 +569,8 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 		size_t payload_len = (etx > 3) ? (etx - 3) : 0;
 		std::string command = messages[i].substr(3, payload_len);
 		
+        log_lister(serverSocket, "sent " + command);
+		
 		// Commands
 		if (command.rfind("HELO", 0) == 0)
         {
@@ -607,8 +601,6 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 				clients[serverSocket]->name = server_name;
 				sentHelo(serverSocket, "A5_23");
 			}
-			
-			log_lister(serverSocket, "sent " + command);
 			
 			// Send back SERVERS
 			std::string response = "SERVERS,";
@@ -645,8 +637,6 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 			size_t comma = command.find(',');
 			std::string server_name = command.substr(comma + 1);
 			
-			log_lister(serverSocket, "sent " + command);
-			
 			if (server_name == "A5_23")
             {
 				std::string error_message = "ERROR: STOP TRYING TO STEAL MY MAIL!";
@@ -677,9 +667,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
         {
 			size_t comma = command.find(',');
 			int nr_of_messages = atoi(command.substr(comma + 1).c_str());
-            std::string groupId = "A5_23"; 
-            
-            log_lister(serverSocket, "sent " + command);
+            std::string groupId = "A5_23";
             
             if (nr_of_messages < 1) return;
             // Get the messages the server has for us
@@ -688,8 +676,6 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 		
 		else if (command.rfind("STATUSREQ", 0) == 0)
         {
-            log_lister(serverSocket, "Received STATUSREQ from a peer.");
-
 			// Start building the response string.
             std::string response_body = "STATUSRESP,";
 
@@ -723,7 +709,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
             packet[total_length - 1] = 0x03; // ETX
 
             send(serverSocket, packet, total_length, 0);
-            log_lister(serverSocket, "Sent STATUSRESP: " + response_body);
+            log_lister(serverSocket, "received STATUSRESP: " + response_body);
 		}
 		
 		else if (command.rfind("SENDMSG", 0) == 0)
@@ -778,6 +764,8 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 
 				}
 		    }
+		    
+            log_lister(serverSocket, "is now connected as a server");
 		
 		   // Do a DFS for other servers through this one
 		   for (int i = 1; i < parts.size(); i ++)
@@ -808,8 +796,6 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 
         else if (command.rfind("STATUSRESP,", 0) == 0)
 		{
-            log_lister(serverSocket, "Received STATUSRESP: " + command);
-
             // Parse the response. Get the data part after sending "STATUSRESP,"
             // Expected data example: "A5_4,20,A5_71,2"
             std::string data = command.substr(11); 
@@ -858,7 +844,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
         }
         else
         {
-			log_lister(serverSocket, " has sent an unknown command");
+			log_lister(serverSocket, "has sent an unknown command");
 		}
 	}
 }
@@ -888,7 +874,6 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
     char first = (!nm.empty() ? nm[0] : '\0');
     if (buffer[0] == '\x01' || first == 'A' || first == 'I')
     {
-	    log_lister(clientSocket, "first byte is correct <SOH>, got into servermessage");
 	    serverCommand(clientSocket, buffer, message_len, disconnectedClients);
 	    return;
     }
@@ -930,7 +915,7 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 
             if (servers.count(resieverGroupID))
             {
-                log_lister(clientSocket, "Recipient is a connected peer. Forwarding message...");
+                log_lister(clientSocket, "Received message from " + senderGroupID + " where recipient is a connected peer. Forwarding message...");
 
                 // Call helper function to send the message to the peer
                 // The peers socket is stored in the servers map
@@ -971,7 +956,7 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
             messageQueues[clientGroupID].pop_front();
 
             // Log event
-            log_lister(clientSocket, "Delivered message from " + oldestMessage.from);
+            log_lister(clientSocket, "Client got message from " + oldestMessage.from);
 
         }
         else
@@ -979,6 +964,8 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
             // If there are no messages, tell the client
             const char* no_msg = "No new messages.\n";
             send(clientSocket, no_msg, strlen(no_msg), 0);
+            // Log event
+            log_lister(clientSocket, "Client got no messages");
         }
     }
     // Check for LISTSERVERS command
@@ -999,6 +986,8 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
             }
         }
         send(clientSocket, server_list_msg.c_str(), server_list_msg.length(), 0);
+		// Log event
+		log_lister(clientSocket, "Servers sent to client: " + server_list_msg);
     }
 
     // Set myIP so we don't connect to our machine
@@ -1011,6 +1000,8 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
         std::string port = line.substr(second_comma + 1);
         myIP = IP;
         myPort = port;
+		// Log event
+		log_lister(clientSocket, "Client set IP: " + IP + ":" + port);
     }
     // Connect to server using IP, port and name
    	else if(line.rfind("CONNECT", 0) == 0)
@@ -1022,6 +1013,7 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 		std::string port = line.substr(second_comma + 1, third_comma - (second_comma + 1));
 		std::string name = line.substr(third_comma + 1);
 		connectServer(IP.c_str(), port.c_str(), name.c_str());
+		log_lister(clientSocket, "Client requested connection to: " + name + " - " + IP + ":" + port);
 	}
 	else if(line == "LEAVE")
 	{
@@ -1030,12 +1022,14 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 		// select() detects the OS has torn down the connection.
 	 
 		closeClient(clientSocket);
+		log_lister(clientSocket, "Client requested to close connection");
 	}
 	else if(line.rfind("NAME", 0) == 0)
 	{
 		size_t comma = line.find(',');
 		std::string name = line.substr(comma + 1);
 		clients[clientSocket]->name = name;
+		log_lister(clientSocket, "Client set name: " + name);
 	}
     else 
     {
@@ -1059,6 +1053,8 @@ void keepAlive()
         }
 
         std::string command_str = "KEEPALIVE," + std::to_string(message_count);
+		
+		log_lister(clientSocket, "Received: " + command_str);
 
         uint16_t total_length = 5 + command_str.length();   // Calculate the lenght
         uint16_t network_length = htons(total_length);  // In network byte order
@@ -1183,7 +1179,7 @@ int main(int argc, char* argv[])
                       ssize_t message_len = recv(client->sock, buffer, sizeof(buffer), MSG_DONTWAIT);
                       if( message_len == 0)
                       {
-                            log_lister(client->sock, "client disconnected.");
+                            log_lister(client->sock, "Client disconnected.");
                             disconnectedClients.push_back(client);
                       }
                       // We don't check for -1 (nothing received) because select()
@@ -1191,7 +1187,6 @@ int main(int argc, char* argv[])
                       else
                       {
                             clientCommand(client->sock, buffer, (size_t)message_len, &disconnectedClients);
-                            log_lister(client->sock, "Recived data: " + std::string(buffer));
                       }
                   }
                 }
