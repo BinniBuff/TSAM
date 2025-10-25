@@ -32,6 +32,7 @@
 #include <string>
 #include <random>
 #include <iterator>
+#include <array>
 
 
 // fix SOCK_NONBLOCK for OSX
@@ -51,11 +52,11 @@ class Client
     int sock;              // socket of client connection
     std::string name;           // Limit length of name of client's user
     char client_buffer[5005];           // Buffer for clients if stream sends more than one message
+    size_t client_buffer_size;
 
-    Client(int socket) : sock(socket)
+    Client(int socket) : sock(socket), name(""), client_buffer_size(0)
     {
-		memset(client_buffer, 0, sizeof(client_buffer)); // breytt úr 5000 yfir í stærð af client_buffer
-		name = "";
+		memset(client_buffer, 0, sizeof(client_buffer)); // clear the buffer
 	} 
 
     ~Client(){}            // Virtual destructor defined for base class
@@ -89,6 +90,19 @@ class Message
     ~Message(){}            // Virtual destructor defined for base class
 };
 
+// Cache class
+class Cache
+{
+  public:
+    std::string server_name;           // Name of the sender of message
+    std::string server_IP;           // IP of the sender of message
+    std::string server_port;           // port of the sender of message
+    Cache(const std::string& name, const std::string& ip, const std::string& port)
+        : server_name(name), server_IP(ip), server_port(port) {}
+
+    ~Cache(){}            // Virtual destructor defined for base class
+};
+
 // Note: map is not necessarily the most efficient method to use here,
 // especially for a server with large numbers of simulataneous connections,
 // where performance is also expected to be an issue.
@@ -104,6 +118,10 @@ std::map<std::string, std::list<Message>> messageQueues;
 // A reference to our IP so we don't connect to it
 std::string myIP = "";
 std::string myPort = "";
+// A cache of last 5 connected IPs
+Cache *last_five[5] = {nullptr};
+// A cache of last 3 connected instructor IPs
+Cache *last_instructors[3] = {nullptr};
 
 fd_set openSockets; // Current open sockets 
 int maxfds; // Passed to select() as max fd in set
@@ -228,6 +246,8 @@ int open_socket(int portno)
 
 void closeClient(int clientSocket)
 {
+	if (clientSocket < 0) return;
+	
     log_lister(clientSocket, "Connection closed");
 
     close(clientSocket);      
@@ -347,10 +367,62 @@ void connectServer(const char *IP, const char *port, const char *name)
    servers[name]->IP = IP;
    servers[name]->port = port;
    log_lister(serverSocket, "Server connected after receiving HELO from our server");
-
+   
+   // Add to cache if not already there
+   Cache *new_server = new Cache(name, IP, port);
+   auto same_entry = std::find_if(std::begin(last_five), std::end(last_five),
+    [&](Cache* c){
+        return c && c->server_name == name && c->server_IP == IP && c->server_port == port;
+    });
+    
+    bool was_in_cache = true;
+    
+   if (same_entry == std::end(last_five))
+   {
+	   auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
+	   if (it == std::end(last_five))
+	   {
+		  if (last_five[0]) delete last_five[0];
+	      for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
+	      last_five[4] = new_server;
+	   }
+	   else
+	   {
+	   	   *it = new_server;
+	   }
+	   was_in_cache = false;
+   }
+   
+   // Add to instructors and instructor cache if not already there
    if (name[0] == 'I')
    {
 	   instructors[serverSocket] = clients[serverSocket];
+	   
+	   auto same_instr = std::find_if(std::begin(last_instructors), std::end(last_instructors),
+        [&](Cache* c){
+            return c && c->server_name == name && c->server_IP == IP && c->server_port == port;
+        });
+        
+	   if (same_instr == std::end(last_instructors))
+	   {
+		   auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
+	       if (it == std::end(last_instructors))
+	       {
+			 if (last_instructors[0]) delete last_instructors[0];
+	         for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
+	         last_instructors[2] = new_server;
+	       }
+	       else
+	       {
+		      *it = new_server;
+	       }
+	       was_in_cache = false;
+	   }
+   }
+   
+   if (was_in_cache)
+   {
+	   delete new_server;
    }
    
    sentHelo(serverSocket, "A5_23");
@@ -402,8 +474,16 @@ void sendMsg(int serverSocket, const char *to_name)
 		std::string body = message.body;
 		message_to_send += from_group + ",";
 		message_to_send += body;
-		if (message_to_send.find('\04') != std::string::npos)
+		size_t EOT = message_to_send.find('\04');
+		if (EOT != std::string::npos)
         {
+			// first see how many bytes are after \04 and if they are too many don't send the message
+			if (message_to_send.size() - EOT > 235) 
+			{
+				log_lister(serverSocket, "Too many hops, dropping message");
+				messageQueues[serverGroupID].pop_front();
+				return;
+			}
 			if (message_to_send[message_to_send.length() - 1] == '\04') message_to_send += "A5_23";
 			else message_to_send += ",A5_23";
 		}
@@ -429,9 +509,9 @@ void sendMsg(int serverSocket, const char *to_name)
 	}
 }
 
-void recvMsg(int serverSocket, const char *buffer)
+void recvMsg(int serverSocket, const char *buffer, size_t message_len)
 {
-	std::string line = std::string(buffer);
+	std::string line = std::string(buffer, message_len);
 	// Find the position of the first, second and third commas
 	size_t first_comma = line.find(',');
 	size_t second_comma = line.find(',', first_comma + 1);
@@ -542,11 +622,9 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 		if ((len - 1) > messages[i].size())
         {
             // Here is performed a partial copy of the message that goes through the buffer
-            // char* strncpy(char* destination, const char* source, size_t num)
-            strncpy(clients[serverSocket]->client_buffer, messages[i].c_str(), sizeof(clients[serverSocket]->client_buffer) - 1);
-
-            // Ensures the null terminator is set; so what is copied is 4999 bytes with space for the null terminator so overflow does not occur
-			clients[serverSocket]->client_buffer[sizeof(clients[serverSocket]->client_buffer) - 1] = '\0';  
+            size_t to_copy = std::min(messages[i].size(), sizeof(clients[serverSocket]->client_buffer));
+			memcpy(clients[serverSocket]->client_buffer, messages[i].data(), to_copy);
+			clients[serverSocket]->client_buffer_size = to_copy;
 			log_lister(serverSocket, "sent a message that has been split and the first part is in the buffer");
             return;
 		}
@@ -713,7 +791,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 		
 		else if (command.rfind("SENDMSG", 0) == 0)
         {
-			recvMsg(serverSocket, command.c_str());
+			recvMsg(serverSocket, command.data(), command.size());
 		}
 		
 		else if (command.rfind("SERVERS", 0) == 0)
@@ -728,6 +806,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 		   std::stringstream ss(in_servers);
 		   while (std::getline(ss, tmp, ';'))
            {
+			   // only connect to servers named A_<group nr> or Instr_<group nr>
                if(!(tmp.rfind("A", 0) == 0 || tmp.rfind("Instr", 0) == 0)){continue;}
 			   parts.push_back(tmp);
 		   }
@@ -748,6 +827,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 
            if ((this_server_split.size() == 3) && (servers.count(server_name) == 0))
            {
+			   // we assume the server first sends its own information
 			    server_ip = this_server_split[1];
 			    server_port = this_server_split[2];
 			    servers[server_name] = new Server(serverSocket);
@@ -755,16 +835,70 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 				servers[server_name]->IP = server_ip;
 				servers[server_name]->port = server_port;
 				clients[serverSocket]->name = server_name;
+   
+			   // Add to cache if not already there
+			   Cache *new_server = new Cache(server_name, server_ip, server_port);
+			   // find if there is an entry in the cache with the same fields
+			   auto same_entry = std::find_if(std::begin(last_five), std::end(last_five),
+				[&](Cache* c){
+					return c && c->server_name == server_name && c->server_IP == server_ip && c->server_port == server_port;
+				});
 				
-				// Add server to instructor list if it is an instructor server
-				if (server_name[0] == 'I')
-                {
-				    instructors[serverSocket] = clients[serverSocket];
-
-				}
-		    }
+				// variable to decide whether to delete new_server or not
+				bool was_in_cache = true;
+				
+			   if (same_entry == std::end(last_five))
+			   {
+				   // Find an empty slot
+				   auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
+				   // No empty slot, need to delete the oldest and move the others up
+				   if (it == std::end(last_five))
+				   {
+					  if (last_five[0]) delete last_five[0];
+					  for (int i = 0; i < 4; i++) last_five[i] = last_five[i + 1];
+					  last_five[4] = new_server;
+				   }
+				   else
+				   {
+					   *it = new_server;
+				   }
+				   was_in_cache = false;
+			   }
+			   
+			   // Add to instructors and instructor cache if not already there (process same as above)
+			   if (server_name[0] == 'I')
+			   {
+				   instructors[serverSocket] = clients[serverSocket];
+				   
+				   auto same_instr = std::find_if(std::begin(last_instructors), std::end(last_instructors),
+					[&](Cache* c){
+						return c && c->server_name == server_name && c->server_IP == server_ip && c->server_port == server_port;
+					});
+					
+				   if (same_instr == std::end(last_instructors))
+				   {
+					   auto it = std::find(std::begin(last_instructors), std::end(last_instructors), nullptr);
+					   if (it == std::end(last_instructors))
+					   {
+						 if (last_instructors[0]) delete last_instructors[0];
+						 for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
+						 last_instructors[2] = new_server;
+					   }
+					   else
+					   {
+						  *it = new_server;
+					   }
+					   was_in_cache = false;
+				   }
+			   }
+			   
+			   if (was_in_cache)
+			   {
+				   delete new_server;
+			   }
 		    
             log_lister(serverSocket, "is now connected as a server");
+		    }
 		
 		   // Do a DFS for other servers through this one
 		   for (int i = 1; i < parts.size(); i ++)
@@ -776,18 +910,19 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 			   
 			   std::stringstream nested_ss(parts[i]);
 			   std::vector<std::string> nested_parts;
+			   // split servers into name, ip and port
 			   while (std::getline(nested_ss, tmp, ','))
                {
 				   nested_parts.push_back(tmp);
 			   }
 			   if (nested_parts.size() < 3)
                {
-			   	   continue;
+			   	   continue;								// make sure the server has all necessary parts
 			   }
 			   std::string new_name = nested_parts[0];
 			   std::string new_IP = nested_parts[1];
 			   std::string new_port = nested_parts[2];
-			   if (new_name == "A5_23") continue;
+			   if (new_name == "A5_23") continue;			// don't connect to our own server
 			   if (servers.count(new_name) == 0) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
 
 		   }
@@ -860,16 +995,17 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
     char first = (!nm.empty() ? nm[0] : '\0');
     
 	// Make sure there is nothing left from this socket from before
-    if (clients[clientSocket]->client_buffer[4] != 0){
+    if (clients[clientSocket]->client_buffer_size > 0){
         // see if there are leftover messages in the buffer. if so we need to finish those before addressing new ones
-        std::string line(clients[clientSocket]->client_buffer);
-        // empty the client_buffer by creating a new one
-        memset(clients[clientSocket]->client_buffer, 0, sizeof(clients[clientSocket]->client_buffer));
+        std::string line(clients[clientSocket]->client_buffer, clients[clientSocket]->client_buffer_size);
+        // clear the client_buffer
+        memset(clients[clientSocket]->client_buffer, 0, clients[clientSocket]->client_buffer_size);
+        clients[clientSocket]->client_buffer_size = 0;
         
-        log_lister(clientSocket, "sent a message that got split and we have gotten the first part from the client and added to the second part just received");
+        log_lister(clientSocket, "sent a message that got split and we have gotten the first part from the stored client buffer and added to the second part just received");
         
         line.append(buffer, message_len);
-        serverCommand(clientSocket, line.c_str(), message_len, disconnectedClients);
+        serverCommand(clientSocket, line.data(), line.size(), disconnectedClients);
         return;
     }
     else if (buffer[0] == '\x01' || first == 'A' || first == 'I')
@@ -1072,7 +1208,7 @@ void keepAlive()
 
     }
 }
-
+	
 int main(int argc, char* argv[])
 {
     bool finished;
@@ -1084,19 +1220,23 @@ int main(int argc, char* argv[])
     socklen_t clientLen;
     char buffer[5005]; // buffer for reading from clients
     time_t lastKeepAliveTime = 0;  // Timer to make sure keepAlive does not run more than once a minute
+    time_t time_toConnect = 0;     // Timer to make sure server does not try to connect more than once every five seconds
 
     if(argc != 2)
     {
+        printf("Usage: chat_server <ip port>\n");
         exit(0);
     }
 
     // Setup socket for server to listen to
 
-    listenSock = open_socket(atoi(argv[1])); 
+    listenSock = open_socket(atoi(argv[1]));
+    printf("Listening on port: %d\n", atoi(argv[1])); 
     log_lister(0, "Server started listening on port " + std::to_string(atoi(argv[1])));
 
     if(listen(listenSock, BACKLOG) < 0)
     {
+        printf("Listen failed on port %s\n", argv[1]);
         exit(0);
     }
     else 
@@ -1168,7 +1308,7 @@ int main(int argc, char* argv[])
             }
             // Now check for commands from clients
             std::list<Client *> disconnectedClients;
-            if(n > 0)
+            while(n-- > 0)
             {
                for(auto const& pair : clients)
                {
@@ -1182,14 +1322,24 @@ int main(int argc, char* argv[])
                             log_lister(client->sock, "Client disconnected.");
                             disconnectedClients.push_back(client);
                       }
-                      // We don't check for -1 (nothing received) because select()
-                      // only triggers if there is something on the socket for us.
-                      else
+                      else if (message_len < 0) 
+                      {
+					  	  if (errno == EAGAIN || errno == EWOULDBLOCK) {
+							  continue;
+						  } 
+						  else 
+						  {
+							  log_lister(client->sock, std::string("recv error: ") + strerror(errno));
+							  disconnectedClients.push_back(client);
+						  }
+					  }
+                      else if (message_len > 0)
                       {
                             clientCommand(client->sock, buffer, (size_t)message_len, &disconnectedClients);
                       }
                   }
                 }
+                
                 std::vector<int> socketsToDelete;
                 // Remove client from the clients list
                 for(auto const& c : disconnectedClients)
@@ -1206,39 +1356,79 @@ int main(int argc, char* argv[])
 						clients.erase(sock);
 					}
                 }
-                if (servers.size() > 1 && servers.size() < 3)
-                {
-
-                    for (auto const& pair : servers)
-                    {
-                        Server* s = pair.second;
-
-                        sentHelo(s->sock, "A5_23");
-                        log_lister(s->sock, "Sent HELO to " + s->name + " - " + s->IP + ":" + s->port);
-				    }
-                }
                 
-				if (!messageQueues.empty() && !servers.empty())
+                // Every five seconds, if the server is not connected to at least three others it tries to make more connections
+                // Also if it has outstanding messages it tries to get them out
+                if (currentTime - time_toConnect >= 5)
                 {
+					time_toConnect = currentTime;
+					if (servers.size() >= 1 && servers.size() < 3)
+					{
+
+						for (auto const& pair : servers)
+						{
+							Server* s = pair.second;
+
+							sentHelo(s->sock, "A5_23");
+							log_lister(s->sock, "Sent HELO to " + s->name + " - " + s->IP + ":" + s->port);
+						}
+					}
+					else if (servers.empty())
+					{
+						for (auto const& cache : last_five)
+						{
+							if (!cache) continue;
+							if (servers.count(cache->server_name)) continue;
+							connectServer(cache->server_IP.c_str(), cache->server_port.c_str(), cache->server_name.c_str());
+						}
+						if (servers.empty())
+						{
+							for (auto const& cache : last_instructors)
+							{
+								if (!cache) continue;
+								if (servers.count(cache->server_name)) continue;
+								connectServer(cache->server_IP.c_str(), cache->server_port.c_str(), cache->server_name.c_str());
+							}
+						}
+					}
+					
+					if (!messageQueues.empty() && !servers.empty())
+					{
+						std::random_device rd;
+						std::mt19937 gen(rd());
+						std::uniform_int_distribution<> distrib(0, servers.size() - 1);
+
+						int randomIndex = distrib(gen);
+
+						auto it = servers.begin();
+						std::advance(it, randomIndex);
+
+						std::uniform_int_distribution<> rec_distrib(0, messageQueues.size() - 1);
+
+						int randomIndexReceiver = rec_distrib(gen);
+
+						auto rec_it = messageQueues.begin();
+						std::advance(rec_it, randomIndexReceiver);
+
+						std::string receiver = rec_it->first;
+						int random_server = it->second->sock;
+						sendMsg(random_server, receiver.c_str());
+					}
+					// create a message to send to a random server
+					static const std::array<std::string, 36> servernames = {
+						"A5_1","A5_2","A5_3","A5_4","A5_5","A5_6","A5_11","A5_12","A5_13","A5_14",
+						"A5_15","A5_21","A5_25","A5_27","A5_28","A5_29","A5_30","A5_32","A5_33","A5_42","A5_44","A5_52","A5_60",
+						"A5_64","A5_65","A5_67","A5_69","A5_77","A5_92","A5_123","A5_130","A5_147","A5_150","A5_151","A5_152","A5_153"};
 					std::random_device rd;
 					std::mt19937 gen(rd());
-					std::uniform_int_distribution<> distrib(0, servers.size() - 1);
+					std::uniform_int_distribution<> distrib(0, servernames.size() - 1);
 
 					int randomIndex = distrib(gen);
 
-					auto it = servers.begin();
-					std::advance(it, randomIndex);
-
-					std::uniform_int_distribution<> rec_distrib(0, messageQueues.size() - 1);
-
-					int randomIndexReceiver = rec_distrib(gen);
-
-					auto rec_it = messageQueues.begin();
-					std::advance(rec_it, randomIndex);
-
-					std::string receiver = rec_it->first;
-					int random_server = it->second->sock;
-					sendMsg(random_server, receiver.c_str());
+					std::string receiver = servernames[randomIndex];
+					
+					Message newMessage("A5_23", "Hello there, from group 23");
+					messageQueues[receiver].push_back(newMessage);
 				}
             }
         }
