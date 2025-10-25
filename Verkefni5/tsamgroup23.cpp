@@ -33,6 +33,7 @@
 #include <random>
 #include <iterator>
 #include <array>
+#include <signal.h>
 
 
 // fix SOCK_NONBLOCK for OSX
@@ -284,7 +285,17 @@ void sentHelo(int serverSocket, std::string const& myGroup, std::list<Client *> 
    {
 	   if (errno == EPIPE) {
           log_lister(serverSocket, "Broken pipe (remote closed)");
-          disconnectedClients->push_back(clients[serverSocket]);
+          auto itc = clients.find(serverSocket);
+		  if (itc != clients.end() && itc->second) 
+		  {
+		  	  disconnectedClients->push_back(itc->second);
+		  } 
+		  else 
+		  {
+			  // socket not tracked; do a defensive close/FD_CLR
+			  closeClient(serverSocket);
+			  removeServerBySocket(serverSocket);
+		  }
 		  return;
 	   } 
 	   else 
@@ -456,7 +467,17 @@ void getMsgs(int serverSocket, const char* group_id, std::list<Client *> *discon
 		if (errno == EPIPE) 
 		{
 			log_lister(serverSocket, "Broken pipe (remote closed)");
-			disconnectedClients->push_back(clients[serverSocket]);
+			auto itc = clients.find(serverSocket);
+			if (itc != clients.end() && itc->second) 
+			{
+				disconnectedClients->push_back(itc->second);
+			} 
+			else 
+			{
+				// socket not tracked; do a defensive close/FD_CLR
+				closeClient(serverSocket);
+				removeServerBySocket(serverSocket);
+			}
 			return;
 		}
 		else 
@@ -524,7 +545,17 @@ void sendMsg(int serverSocket, const char *to_name, std::list<Client *> *disconn
 			if (errno == EPIPE)
 			{
 				log_lister(serverSocket, "Broken pipe (remote closed)");
-				disconnectedClients->push_back(clients[serverSocket]);
+				auto itc = clients.find(serverSocket);
+				if (itc != clients.end() && itc->second) 
+				{
+					disconnectedClients->push_back(itc->second);
+				} 
+				else 
+				{
+					// socket not tracked; do a defensive close/FD_CLR
+					closeClient(serverSocket);
+					removeServerBySocket(serverSocket);
+				}
 				return;
 			} 
 			else 
@@ -594,7 +625,17 @@ void outGoingStatusReq(std::list<Client *> *disconnectedClients)
 			if (errno == EPIPE) 
 			{
 				log_lister(server->sock, "Broken pipe (remote closed)");
-				disconnectedClients->push_back(clients[server->sock]);
+				auto itc = clients.find(server->sock);
+				if (itc != clients.end() && itc->second) 
+				{
+					disconnectedClients->push_back(itc->second);
+				} 
+				else 
+				{
+					// socket not tracked; do a defensive close/FD_CLR
+					closeClient(server->sock);
+					removeServerBySocket(server->sock);
+				}
 				return;
 			} 
 			else 
@@ -756,7 +797,17 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 				if (errno == EPIPE) 
 				{
 					log_lister(serverSocket, "Broken pipe (remote closed)");
-					disconnectedClients->push_back(clients[serverSocket]);
+					auto itc = clients.find(serverSocket);
+					if (itc != clients.end() && itc->second) 
+					{
+						disconnectedClients->push_back(itc->second);
+					} 
+					else 
+					{
+						// socket not tracked; do a defensive close/FD_CLR
+						closeClient(serverSocket);
+						removeServerBySocket(serverSocket);
+					}
 					return;
 				} 
 				else 
@@ -796,7 +847,17 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 					if (errno == EPIPE) 
 					{
 						log_lister(serverSocket, "Broken pipe (remote closed)");
-						disconnectedClients->push_back(clients[serverSocket]);
+						auto itc = clients.find(serverSocket);
+						if (itc != clients.end() && itc->second) 
+						{
+							disconnectedClients->push_back(itc->second);
+						} 
+						else 
+						{
+							// socket not tracked; do a defensive close/FD_CLR
+							closeClient(serverSocket);
+							removeServerBySocket(serverSocket);
+						}
 						return;
 					} 
 					else 
@@ -865,7 +926,17 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 				if (errno == EPIPE) 
 				{
 					log_lister(serverSocket, "Broken pipe (remote closed)");
-					disconnectedClients->push_back(clients[serverSocket]);
+					auto itc = clients.find(serverSocket);
+					if (itc != clients.end() && itc->second) 
+					{
+						disconnectedClients->push_back(itc->second);
+					} 
+					else 
+					{
+						// socket not tracked; do a defensive close/FD_CLR
+						closeClient(serverSocket);
+						removeServerBySocket(serverSocket);
+					}
 					return;
 				} 
 				else 
@@ -1152,7 +1223,17 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 				if (errno == EPIPE) 
 				{
 					log_lister(clientSocket, "Broken pipe (remote closed)");
-					disconnectedClients->push_back(clients[clientSocket]);
+					auto itc = clients.find(clientSocket);
+					if (itc != clients.end() && itc->second) 
+					{
+						disconnectedClients->push_back(itc->second);
+					} 
+					else 
+					{
+						// socket not tracked; do a defensive close/FD_CLR
+						closeClient(clientSocket);
+						removeServerBySocket(clientSocket);
+					}
 					return;
 				} 
 				else 
@@ -1187,7 +1268,17 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 				if (errno == EPIPE) 
 				{
 					log_lister(clientSocket, "Broken pipe (remote closed)");
-					disconnectedClients->push_back(clients[clientSocket]);
+					auto itc = clients.find(clientSocket);
+					if (itc != clients.end() && itc->second) 
+					{
+						disconnectedClients->push_back(itc->second);
+					} 
+					else 
+					{
+						// socket not tracked; do a defensive close/FD_CLR
+						closeClient(clientSocket);
+						removeServerBySocket(clientSocket);
+					}
 					return;
 				} 
 				else 
@@ -1237,7 +1328,17 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 				if (errno == EPIPE) 
 				{
 					log_lister(clientSocket, "Broken pipe (remote closed)");
-					disconnectedClients->push_back(clients[clientSocket]);
+					auto itc = clients.find(clientSocket);
+					if (itc != clients.end() && itc->second) 
+					{
+						disconnectedClients->push_back(itc->second);
+					} 
+					else 
+					{
+						// socket not tracked; do a defensive close/FD_CLR
+						closeClient(clientSocket);
+						removeServerBySocket(clientSocket);
+					}
 					return;
 				} 
 				else 
@@ -1475,10 +1576,13 @@ int main(int argc, char* argv[])
                 // Remove client from the clients list
                 for(auto const& c : disconnectedClients)
                 {
-                    closeClient(c->sock);
-                    removeServerBySocket(c->sock);
-                    socketsToDelete.push_back(c->sock);
+					if (!c) continue;
+					int fd = c->sock;
+                    closeClient(fd);
+                    removeServerBySocket(fd);
+                    socketsToDelete.push_back(fd);
                 }
+                disconnectedClients.clear();
                 for (int sock : socketsToDelete)
 				{
 					if (clients.count(sock)) 
