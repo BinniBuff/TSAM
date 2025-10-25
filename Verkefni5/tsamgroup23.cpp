@@ -375,8 +375,6 @@ void connectServer(const char *IP, const char *port, const char *name)
         return c && c->server_name == name && c->server_IP == IP && c->server_port == port;
     });
     
-    bool was_in_cache = true;
-    
    if (same_entry == std::end(last_five))
    {
 	   auto it = std::find(std::begin(last_five), std::end(last_five), nullptr);
@@ -390,14 +388,15 @@ void connectServer(const char *IP, const char *port, const char *name)
 	   {
 	   	   *it = new_server;
 	   }
-	   was_in_cache = false;
    }
+   else delete new_server;
    
    // Add to instructors and instructor cache if not already there
    if (name[0] == 'I')
    {
 	   instructors[serverSocket] = clients[serverSocket];
 	   
+	   Cache *new_i_server = new Cache(name, IP, port);
 	   auto same_instr = std::find_if(std::begin(last_instructors), std::end(last_instructors),
         [&](Cache* c){
             return c && c->server_name == name && c->server_IP == IP && c->server_port == port;
@@ -410,19 +409,14 @@ void connectServer(const char *IP, const char *port, const char *name)
 	       {
 			 if (last_instructors[0]) delete last_instructors[0];
 	         for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
-	         last_instructors[2] = new_server;
+	         last_instructors[2] = new_i_server;
 	       }
 	       else
 	       {
-		      *it = new_server;
+		      *it = new_i_server;
 	       }
-	       was_in_cache = false;
 	   }
-   }
-   
-   if (was_in_cache)
-   {
-	   delete new_server;
+	   else delete new_i_server;
    }
    
    sentHelo(serverSocket, "A5_23");
@@ -844,9 +838,6 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 					return c && c->server_name == server_name && c->server_IP == server_ip && c->server_port == server_port;
 				});
 				
-				// variable to decide whether to delete new_server or not
-				bool was_in_cache = true;
-				
 			   if (same_entry == std::end(last_five))
 			   {
 				   // Find an empty slot
@@ -862,14 +853,15 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 				   {
 					   *it = new_server;
 				   }
-				   was_in_cache = false;
 			   }
+			   else delete new_server;
 			   
 			   // Add to instructors and instructor cache if not already there (process same as above)
 			   if (server_name[0] == 'I')
 			   {
 				   instructors[serverSocket] = clients[serverSocket];
 				   
+				   Cache *new_i_server = new Cache(server_name, server_ip, server_port);
 				   auto same_instr = std::find_if(std::begin(last_instructors), std::end(last_instructors),
 					[&](Cache* c){
 						return c && c->server_name == server_name && c->server_IP == server_ip && c->server_port == server_port;
@@ -882,19 +874,14 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 					   {
 						 if (last_instructors[0]) delete last_instructors[0];
 						 for (int i = 0; i < 2; i++) last_instructors[i] = last_instructors[i + 1];
-						 last_instructors[2] = new_server;
+						 last_instructors[2] = new_i_server;
 					   }
 					   else
 					   {
-						  *it = new_server;
+						  *it = new_i_server;
 					   }
-					   was_in_cache = false;
 				   }
-			   }
-			   
-			   if (was_in_cache)
-			   {
-				   delete new_server;
+				   else delete new_i_server;
 			   }
 		    
             log_lister(serverSocket, "is now connected as a server");
@@ -965,7 +952,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
                 // Check if the messages are for us OR for a peer we are directly connected to.
                 if(group_id == our_group_id || servers.count(group_id))
                 {
-                    log_lister(serverSocket, "Peer has " + std::to_string(msg_count) + " messages for " + group_id + ". Retrieving them.");
+                    if (msg_count > 0) log_lister(serverSocket, "Peer has " + std::to_string(msg_count) + " messages for " + group_id + ". Retrieving them.");
                     
                     // Request each message by calling getMsg function.
                     int max_req = std::min(msg_count, 5);
