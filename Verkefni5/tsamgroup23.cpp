@@ -264,7 +264,7 @@ void closeClient(int clientSocket)
 
 }
 
-void sentHelo(int serverSocket, std::string const& myGroup)
+void sentHelo(int serverSocket, std::string const& myGroup, std::list<Client *> *disconnectedClients)
 {
 
    std::string helo = "HELO," + myGroup;
@@ -282,16 +282,24 @@ void sentHelo(int serverSocket, std::string const& myGroup)
 
    if(nwrite  == -1)
    {
-	   perror("send() to server failed: ");
-	   log_lister(serverSocket, "Send() HELO failed");
-	   return;
+	   if (errno == EPIPE) {
+          log_lister(serverSocket, "Broken pipe (remote closed)");
+          disconnectedClients->push_back(clients[serverSocket]);
+		  return;
+	   } 
+	   else 
+	   {
+		   perror("send() to server failed: ");
+		   log_lister(serverSocket, "Send() HELO failed");
+		   return;
+	   }
    }
    
    log_lister(serverSocket, "Received HELO: " + helo);
 
 }
 
-void connectServer(const char *IP, const char *port, const char *name)
+void connectServer(const char *IP, const char *port, const char *name, std::list<Client *> *disconnectedClients)
 {
    struct addrinfo hints, *svr; // Network host entry for server
    struct sockaddr_in serv_addr; // Socket address for server
@@ -419,10 +427,10 @@ void connectServer(const char *IP, const char *port, const char *name)
 	   else delete new_i_server;
    }
    
-   sentHelo(serverSocket, "A5_23");
+   sentHelo(serverSocket, "A5_23", disconnectedClients);
 }
 
-void getMsgs(int serverSocket, const char* group_id)
+void getMsgs(int serverSocket, const char* group_id, std::list<Client *> *disconnectedClients)
 {
 	// Create a get msg
 	std::string get_message = "GETMSGS,";
@@ -442,13 +450,28 @@ void getMsgs(int serverSocket, const char* group_id)
 	packet[total_length - 1] = 0x03; // ETX
 
 	// Send packet
-	send(serverSocket, packet, total_length, 0);
+	size_t nwrite = send(serverSocket, packet, total_length, 0);
+	
+	if (nwrite < 0) {
+		if (errno == EPIPE) 
+		{
+			log_lister(serverSocket, "Broken pipe (remote closed)");
+			disconnectedClients->push_back(clients[serverSocket]);
+			return;
+		}
+		else 
+		{
+			perror("send GETMSG failed");
+			log_lister(serverSocket, "Send() GETMSG failed");
+			return;
+		}
+	}
 	
 	log_lister(serverSocket, "Received GETMSGS from our server");
 }
 
 // SENDMSG is used from many other functions
-void sendMsg(int serverSocket, const char *to_name)
+void sendMsg(int serverSocket, const char *to_name, std::list<Client *> *disconnectedClients)
 {
 	// Get group ID for servers map
 	std::string serverGroupID = std::string(to_name);
@@ -495,7 +518,22 @@ void sendMsg(int serverSocket, const char *to_name)
 		packet[total_length - 1] = 0x03; // ETX
 
 		// Send packet
-		send(serverSocket, packet, total_length, 0);
+		size_t nwrite = send(serverSocket, packet, total_length, 0);
+		
+		if (nwrite < 0) {
+			if (errno == EPIPE)
+			{
+				log_lister(serverSocket, "Broken pipe (remote closed)");
+				disconnectedClients->push_back(clients[serverSocket]);
+				return;
+			} 
+			else 
+			{
+				perror("send failed");
+				log_lister(serverSocket, "Send() SENDMSG failed");
+				return;
+			}
+		}
 
 		// Remove the message from the queue since it's been delivered
 		messageQueues[serverGroupID].pop_front();
@@ -503,7 +541,7 @@ void sendMsg(int serverSocket, const char *to_name)
 	}
 }
 
-void recvMsg(int serverSocket, const char *buffer, size_t message_len)
+void recvMsg(int serverSocket, const char *buffer, size_t message_len, std::list<Client *> *disconnectedClients)
 {
 	std::string line = std::string(buffer, message_len);
 	// Find the position of the first, second and third commas
@@ -525,11 +563,11 @@ void recvMsg(int serverSocket, const char *buffer, size_t message_len)
 		messageQueues[toGroupID].push_back(newMessage);
 		
 		if (toGroupID == "A5_23") return;
-		if (servers.count(toGroupID)) sendMsg(servers[toGroupID]->sock, toGroupID.c_str());
+		if (servers.count(toGroupID)) sendMsg(servers[toGroupID]->sock, toGroupID.c_str(), disconnectedClients);
 	}
 }
 
-void outGoingStatusReq()
+void outGoingStatusReq(std::list<Client *> *disconnectedClients)
 {
     // The command string
     std::string command_str = "STATUSREQ";
@@ -551,7 +589,21 @@ void outGoingStatusReq()
         Server* server = pair.second;
         
         // Send the request.
-        send(server->sock, packet, total_length, 0);
+        size_t nwrite = send(server->sock, packet, total_length, 0);
+        if (nwrite < 0) {
+			if (errno == EPIPE) 
+			{
+				log_lister(server->sock, "Broken pipe (remote closed)");
+				disconnectedClients->push_back(clients[server->sock]);
+				return;
+			} 
+			else 
+			{
+				perror("send failed");
+				log_lister(server->sock, "Send() STATUSREQ failed");
+				return;
+			}
+		}
         // Logit
         log_lister(server->sock, "Received STATUSREQ");
     }
@@ -670,7 +722,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 					removeServerBySocket(instructor->sock);
 				}
 				clients[serverSocket]->name = server_name;
-				sentHelo(serverSocket, "A5_23");
+				sentHelo(serverSocket, "A5_23", disconnectedClients);
 			}
 			
 			// Send back SERVERS
@@ -699,7 +751,21 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 			packet[total_length - 1] = 0x03; // ETX
 
 			// Send packet
-			send(serverSocket, packet, total_length, 0);
+			size_t nwrite = send(serverSocket, packet, total_length, 0);
+			if (nwrite < 0) {
+				if (errno == EPIPE) 
+				{
+					log_lister(serverSocket, "Broken pipe (remote closed)");
+					disconnectedClients->push_back(clients[serverSocket]);
+					return;
+				} 
+				else 
+				{
+					perror("send failed");
+					log_lister(serverSocket, "Send() SERVERS failed");
+					return;
+				}
+			}
 		}
 		
 		else if (command.rfind("GETMSGS", 0) == 0)
@@ -725,12 +791,27 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 				packet[total_length - 1] = 0x03; // ETX
 
 				// Send packet
-				send(serverSocket, packet, total_length, 0);
+				size_t nwrite = send(serverSocket, packet, total_length, 0);
+				if (nwrite < 0) {
+					if (errno == EPIPE) 
+					{
+						log_lister(serverSocket, "Broken pipe (remote closed)");
+						disconnectedClients->push_back(clients[serverSocket]);
+						return;
+					} 
+					else 
+					{
+						perror("send failed");
+						log_lister(serverSocket, "Send() GETMSGS (STOP STEALING MAIL) failed");
+						return;
+					}
+				}
+				
 				continue;
 			}
             else if(!server_name.empty() && messageQueues.count(server_name) && !messageQueues[server_name].empty()) // Check if group has any mail in their message box
             {
-                sendMsg(serverSocket, server_name.c_str());
+                sendMsg(serverSocket, server_name.c_str(), disconnectedClients);
             }
 		}
 		
@@ -742,7 +823,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
             
             if (nr_of_messages < 1) return;
             // Get the messages the server has for us
-			getMsgs(serverSocket, groupId.c_str());
+			getMsgs(serverSocket, groupId.c_str(), disconnectedClients);
 		}
 		
 		else if (command.rfind("STATUSREQ", 0) == 0)
@@ -779,13 +860,27 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
             memcpy(packet + 4, response_body.c_str(), response_body.length());
             packet[total_length - 1] = 0x03; // ETX
 
-            send(serverSocket, packet, total_length, 0);
+            size_t nwrite = send(serverSocket, packet, total_length, 0);
+			if (nwrite < 0) {
+				if (errno == EPIPE) 
+				{
+					log_lister(serverSocket, "Broken pipe (remote closed)");
+					disconnectedClients->push_back(clients[serverSocket]);
+					return;
+				} 
+				else 
+				{
+					perror("send failed");
+					log_lister(serverSocket, "Send() STATUSRESP failed");
+					return;
+				}
+			}
             log_lister(serverSocket, "received STATUSRESP: " + response_body);
 		}
 		
 		else if (command.rfind("SENDMSG", 0) == 0)
         {
-			recvMsg(serverSocket, command.data(), command.size());
+			recvMsg(serverSocket, command.data(), command.size(), disconnectedClients);
 		}
 		
 		else if (command.rfind("SERVERS", 0) == 0)
@@ -910,7 +1005,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
 			   std::string new_IP = nested_parts[1];
 			   std::string new_port = nested_parts[2];
 			   if (new_name == "A5_23") continue;			// don't connect to our own server
-			   if (servers.count(new_name) == 0) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str());
+			   if (servers.count(new_name) == 0) connectServer(new_IP.c_str(), new_port.c_str(), new_name.c_str(), disconnectedClients);
 
 		   }
 		}
@@ -958,7 +1053,7 @@ void serverCommand(int serverSocket, const char *buffer, size_t message_len, std
                     int max_req = std::min(msg_count, 5);
                     for(int j = 0; j < msg_count; j++)
                     {
-                        getMsgs(serverSocket, group_id.c_str());
+                        getMsgs(serverSocket, group_id.c_str(), disconnectedClients);
                     }
                 }
             }
@@ -1042,7 +1137,7 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 
                 // Call helper function to send the message to the peer
                 // The peers socket is stored in the servers map
-                sendMsg(servers[resieverGroupID]->sock, resieverGroupID.c_str());
+                sendMsg(servers[resieverGroupID]->sock, resieverGroupID.c_str(), disconnectedClients);
             }
 			else
 			{
@@ -1052,7 +1147,21 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 
             // Send an acknowledgment back
             std::string ack = "Message for " + resieverGroupID + " has been queued.\n";
-            send(clientSocket, ack.c_str(), ack.length(), 0);
+            size_t nwrite = send(clientSocket, ack.c_str(), ack.length(), 0);
+			if (nwrite < 0) {
+				if (errno == EPIPE) 
+				{
+					log_lister(clientSocket, "Broken pipe (remote closed)");
+					disconnectedClients->push_back(clients[clientSocket]);
+					return;
+				} 
+				else 
+				{
+					perror("send failed");
+					log_lister(clientSocket, "Send() SENDMSG to client failed");
+					return;
+				}
+			}
         }
     }
     // Check for GETMSG command
@@ -1073,7 +1182,21 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
             std::string formatted_message = "FROM " + oldestMessage.from + ": " + oldestMessage.body + "\n";
                 
             // Send it to the client.
-            send(clientSocket, formatted_message.c_str(), formatted_message.length(), 0);
+            size_t nwrite = send(clientSocket, formatted_message.c_str(), formatted_message.length(), 0);
+			if (nwrite < 0) {
+				if (errno == EPIPE) 
+				{
+					log_lister(clientSocket, "Broken pipe (remote closed)");
+					disconnectedClients->push_back(clients[clientSocket]);
+					return;
+				} 
+				else 
+				{
+					perror("send failed");
+					log_lister(clientSocket, "Send() GETMSG to client failed");
+					return;
+				}
+			}
 
             // Remove the message from the queue since it's been delivered
             messageQueues[clientGroupID].pop_front();
@@ -1108,7 +1231,24 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
             server_list_msg += "  - Group: " + server->name + " (IP: " + server->IP + ", Port: " + server->port + ")\n";
             }
         }
-        send(clientSocket, server_list_msg.c_str(), server_list_msg.length(), 0);
+        
+        size_t nwrite = send(clientSocket, server_list_msg.c_str(), server_list_msg.length(), 0);
+			if (nwrite < 0) {
+				if (errno == EPIPE) 
+				{
+					log_lister(clientSocket, "Broken pipe (remote closed)");
+					disconnectedClients->push_back(clients[clientSocket]);
+					return;
+				} 
+				else 
+				{
+					perror("send failed");
+					log_lister(clientSocket, "Send() LISTSERVERS to client failed");
+					return;
+				}
+			}
+
+        
 		// Log event
 		log_lister(clientSocket, "Servers sent to client: " + server_list_msg);
     }
@@ -1135,7 +1275,7 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 		std::string IP = line.substr(first_comma + 1, second_comma - (first_comma + 1));
 		std::string port = line.substr(second_comma + 1, third_comma - (second_comma + 1));
 		std::string name = line.substr(third_comma + 1);
-		connectServer(IP.c_str(), port.c_str(), name.c_str());
+		connectServer(IP.c_str(), port.c_str(), name.c_str(), disconnectedClients);
 		log_lister(clientSocket, "Client requested connection to: " + name + " - " + IP + ":" + port);
 	}
 	else if(line == "LEAVE")
@@ -1144,7 +1284,7 @@ void clientCommand(int clientSocket, char *buffer, size_t message_len, std::list
 		// code to deal with tidying up clients etc. when
 		// select() detects the OS has torn down the connection.
 	 
-		closeClient(clientSocket);
+		disconnectedClients->push_back(clients[clientSocket]);
 		log_lister(clientSocket, "Client requested to close connection");
 	}
 	else if(line.rfind("NAME", 0) == 0)
@@ -1198,6 +1338,7 @@ void keepAlive()
 	
 int main(int argc, char* argv[])
 {
+	signal(SIGPIPE, SIG_IGN);
     bool finished;
     int listenSock; // Socket for connections to server
     int clientSock; // Socket of connecting client
@@ -1249,16 +1390,7 @@ int main(int argc, char* argv[])
 
         // Look at sockets and see which ones have something to be read()
         int n = select(maxfds + 1, &readSockets, NULL, &exceptSockets, &tv);
-
-        // Check if it is time to run keepAlive
-        time_t currentTime = time(NULL);
-        if(currentTime - lastKeepAliveTime >= 60)
-        {
-            keepAlive();
-            outGoingStatusReq();
-            lastKeepAliveTime = currentTime;
-        }
-
+        
         if(n < 0)
         {
             perror("select failed - closing down\n");
@@ -1327,6 +1459,18 @@ int main(int argc, char* argv[])
                   }
                 }
                 
+                
+
+				// Check if it is time to run keepAlive
+				time_t currentTime = time(NULL);
+				if(currentTime - lastKeepAliveTime >= 60)
+				{
+					keepAlive();
+					outGoingStatusReq(&disconnectedClients);
+					lastKeepAliveTime = currentTime;
+				}
+
+                
                 std::vector<int> socketsToDelete;
                 // Remove client from the clients list
                 for(auto const& c : disconnectedClients)
@@ -1356,7 +1500,7 @@ int main(int argc, char* argv[])
 						{
 							Server* s = pair.second;
 
-							sentHelo(s->sock, "A5_23");
+							sentHelo(s->sock, "A5_23", &disconnectedClients);
 							log_lister(s->sock, "Sent HELO to " + s->name + " - " + s->IP + ":" + s->port);
 						}
 					}
@@ -1366,7 +1510,7 @@ int main(int argc, char* argv[])
 						{
 							if (!cache) continue;
 							if (servers.count(cache->server_name)) continue;
-							connectServer(cache->server_IP.c_str(), cache->server_port.c_str(), cache->server_name.c_str());
+							connectServer(cache->server_IP.c_str(), cache->server_port.c_str(), cache->server_name.c_str(), &disconnectedClients);
 						}
 						if (servers.empty())
 						{
@@ -1374,7 +1518,7 @@ int main(int argc, char* argv[])
 							{
 								if (!cache) continue;
 								if (servers.count(cache->server_name)) continue;
-								connectServer(cache->server_IP.c_str(), cache->server_port.c_str(), cache->server_name.c_str());
+								connectServer(cache->server_IP.c_str(), cache->server_port.c_str(), cache->server_name.c_str(), &disconnectedClients);
 							}
 						}
 					}
@@ -1399,7 +1543,7 @@ int main(int argc, char* argv[])
 
 						std::string receiver = rec_it->first;
 						int random_server = it->second->sock;
-						sendMsg(random_server, receiver.c_str());
+						sendMsg(random_server, receiver.c_str(), &disconnectedClients);
 					}
 					// create a message to send to a random server
 					static const std::array<std::string, 36> servernames = {
